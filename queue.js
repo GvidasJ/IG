@@ -26,7 +26,6 @@ const HHQueue = (() => {
     'paused_challenge', 'paused_tab', 'paused_restart',
   ]);
   const CANARY_TTL_MS = 10 * 60 * 1000; // re-run canary if older than this
-  const MAX_CONSECUTIVE_UNKNOWNS = 5;
 
   // ---- Enqueue ----------------------------------------------------------
 
@@ -212,14 +211,17 @@ const HHQueue = (() => {
       results[next] = { state, reason, checkedAt: Date.now() };
       await HHStorage.set('results', results);
 
-      // Honesty guard: a stretch of plain UNKNOWNs means the detector is
-      // probably stale — stop burning requests on garbage answers.
+      // Honesty guard: a stretch of plain UNKNOWNs usually means the detector
+      // is stale or Instagram is soft-blocking — stop burning requests on
+      // garbage answers. Configurable; 0 disables it (the run then keeps going
+      // through UNKNOWNs, which are still recorded honestly for later re-check).
+      const limit = Number(settings.maxConsecutiveUnknowns) || 0;
       consecutiveUnknowns = state === 'UNKNOWN' ? consecutiveUnknowns + 1 : 0;
-      if (consecutiveUnknowns >= MAX_CONSECUTIVE_UNKNOWNS) {
+      if (limit > 0 && consecutiveUnknowns >= limit) {
         consecutiveUnknowns = 0;
         await pause(
           'paused_user',
-          `${MAX_CONSECUTIVE_UNKNOWNS} consecutive UNKNOWN results — the detector may be out of date (fix detector.js), or Instagram is serving interstitials. Run paused.`
+          `${limit} consecutive UNKNOWN results — Instagram may be soft-blocking, or the detector is stale. Run paused. (Raise or disable this in Settings → "Pause after N unknowns".)`
         );
         return;
       }

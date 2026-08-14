@@ -152,9 +152,19 @@ async function waitFor(pred, timeoutMs, label) {
   for (const u of unknowns) responses[u] = HTML();
   await HHQueue.enqueue(unknowns);
   await HHQueue.start();
-  run = await waitFor((r) => r.state === 'paused_user' && /detector may be out of date/.test(r.stateReason), 45000, 'unknown guard');
+  run = await waitFor((r) => r.state === 'paused_user' && /consecutive UNKNOWN/.test(r.stateReason), 45000, 'unknown guard');
   const checked = unknowns.filter((u) => run.items[u].state === 'UNKNOWN').length;
   assert(checked === 5, `paused after exactly 5 consecutive UNKNOWNs (got ${checked})`);
+
+  console.log('— consecutive-UNKNOWN guard can be disabled (0) —');
+  await HHQueue.clear();
+  await HHStorage.set('settings', { rateSeconds: 1, jitterFrac: 0, maxQueue: 6, maxConsecutiveUnknowns: 0 });
+  await HHQueue.enqueue(unknowns);
+  await HHQueue.start();
+  run = await waitFor((r) => r.state === 'done', 45000, 'guard disabled completes');
+  const allChecked = unknowns.every((u) => run.items[u].state === 'UNKNOWN');
+  assert(allChecked, 'with guard disabled, run pushes through all UNKNOWNs to done');
+  await HHStorage.set('settings', { rateSeconds: 1, jitterFrac: 0, maxQueue: 6 });
 
   console.log('— signup batch: canary, classify, safe pacing, completion —');
   await HHQueue.clear();

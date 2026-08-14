@@ -512,6 +512,8 @@ function buildSettingsPanel() {
     <input type="number" id="set-rate" min="1" max="3600" step="0.5">
     <label>Max candidates per run (default 500)</label>
     <input type="number" id="set-cap" min="1" max="2000">
+    <label>Pause after N consecutive unknowns (0 = never, default 5)</label>
+    <input type="number" id="set-unknowns" min="0" max="500">
     <div class="row"><button id="set-save">Save settings</button></div>
     <div id="set-feedback" class="small dim"></div>
   `;
@@ -532,17 +534,19 @@ async function saveSettings() {
     );
     if (!ok) { refresh(); return; }
   }
+  const unknowns = Number($('set-unknowns').value);
   const resp = await chrome.runtime.sendMessage({
-    type: 'HH_SET_SETTINGS', settings: { rateSeconds: rate, maxQueue: cap },
+    type: 'HH_SET_SETTINGS', settings: { rateSeconds: rate, maxQueue: cap, maxConsecutiveUnknowns: unknowns },
   });
   $('set-feedback').textContent = resp.ok ? 'Saved.' : resp.error;
   refresh();
 }
 
 function renderSettings(settings) {
-  if (document.activeElement && ['set-rate', 'set-cap'].includes(document.activeElement.id)) return;
+  if (document.activeElement && ['set-rate', 'set-cap', 'set-unknowns'].includes(document.activeElement.id)) return;
   $('set-rate').value = settings.rateSeconds;
   $('set-cap').value = settings.maxQueue;
+  $('set-unknowns').value = settings.maxConsecutiveUnknowns;
 }
 
 // =======================================================================

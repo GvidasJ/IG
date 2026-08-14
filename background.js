@@ -73,6 +73,9 @@ async function handleMessage(msg /*, sender */) {
       if (patch.jitterFrac !== undefined) {
         s.jitterFrac = Math.min(Math.max(Number(patch.jitterFrac) || 0, 0), 2);
       }
+      if (patch.maxConsecutiveUnknowns !== undefined) {
+        s.maxConsecutiveUnknowns = Math.min(Math.max(Math.round(Number(patch.maxConsecutiveUnknowns) || 0), 0), 500);
+      }
       await HHStorage.set('settings', s);
       return { ok: true, settings: s };
     }

@@ -23,6 +23,9 @@ const HHStorage = (() => {
       jitterFrac: 0.5,
       // Hard cap on candidates per run.
       maxQueue: 500,
+      // Pause the run after this many consecutive UNKNOWN results (soft-block
+      // / stale-detector guard). 0 disables it and the run pushes through.
+      maxConsecutiveUnknowns: 5,
     },
     run: {
       // idle | running | paused_user | paused_rate_limited | paused_logged_out

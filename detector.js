@@ -31,7 +31,7 @@
 'use strict';
 
 const HHDetector = (() => {
-  const VERSION = '2026-08-14';
+  const VERSION = '2026-08-15';
 
   // The app id Instagram's own web client sends with this API call. This is a
   // required parameter of the site's public web API, sent same-origin from the
@@ -116,18 +116,17 @@ const HHDetector = (() => {
       return U('UNKNOWN', 'API returned a malformed user object');
     }
 
-    // Alternate free shape: the profile API 404s for nonexistent users. The
-    // exact JSON wording has changed over time ("User not found", "Not
-    // Found", ...), so any parseable JSON API error with 404 counts as a
-    // positive miss. This stays canary-guarded: if Instagram ever starts
-    // 404ing EVERYTHING (block wall), the known-taken canary also reads
-    // AVAILABLE and the run aborts. (Rule loosened 2026-08-15 after a live
-    // canary failure: logged-in 404 body no longer matched "User not found".)
-    if (status === 404 && json) {
-      return U('AVAILABLE', `API 404 for this username${msg ? ` ("${msg}")` : ''}`);
-    }
+    // Free shape: the profile API answers 404 for nonexistent users. Verified
+    // LIVE (logged-in session, 2026-08-15) via a canary failure banner: the
+    // body is a localized HTML "Page Not Found" page, not JSON — and older
+    // shapes were JSON with drifting wording. The body text is therefore
+    // untrustworthy (locale-dependent); the 404 status on this
+    // username-parameterized endpoint is itself the positive miss signal.
+    // Canary-guarded: if Instagram ever starts 404ing EVERYTHING (block
+    // wall), the known-taken canary also reads AVAILABLE and the run aborts.
     if (status === 404) {
-      return U('UNKNOWN', `HTTP 404 with non-JSON body (${obs.contentType || 'unknown type'}) — not trusting it`);
+      const kind = json ? `JSON${msg ? ` "${msg}"` : ''}` : `${obs.contentType || 'unknown'} error page`;
+      return U('AVAILABLE', `profile API returned 404 for this username (${kind})`);
     }
 
     // ---- Everything else is UNKNOWN -------------------------------------

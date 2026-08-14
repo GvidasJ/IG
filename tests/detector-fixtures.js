@@ -37,10 +37,10 @@ const HH_FIXTURES = [
     expect: { state: 'AVAILABLE', signal: null },
   },
   {
-    name: 'NOT available: bare 404 without user-not-found body',
+    name: 'available: 404 HTML error page (observed live logged-in 2026-08-15)',
     candidate: 'hhzq8xk2v9',
-    obs: { status: 404, contentType: 'text/html', bodyText: '<html>...' },
-    expect: { state: 'UNKNOWN', signal: null },
+    obs: { status: 404, contentType: 'text/html; charset=utf-8', bodyText: '<!DOCTYPE html> <html lang="en-gb" class="no-js logged-in "><title>Page Not Found</title>' },
+    expect: { state: 'AVAILABLE', signal: null },
   },
   {
     name: 'rate limit: 429',

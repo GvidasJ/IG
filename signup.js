@@ -73,13 +73,7 @@ const HHSignup = (() => {
     });
 
     const body = [
-      'av=0',
-      '__d=www',
-      '__user=0',
-      '__a=1',
-      '__req=1',
-      '__ccg=EXCELLENT',
-      '__comet_req=7',
+      '__DYNPARAMS__',          // content.js injects av/__rev/__spin_*/__hs scraped from the page
       'lsd=__LSD__',            // replaced by content.js with the live token
       'jazoest=__JAZOEST__',    // replaced by content.js (derived from lsd)
       'fb_api_caller_class=RelayModern',
@@ -126,6 +120,17 @@ const HHSignup = (() => {
 
     if (!json) {
       return U('UNKNOWN', `non-JSON response (HTTP ${status}, ${obs.contentType || 'unknown type'}) — signup query not reachable from this session`);
+    }
+
+    // Meta request-level rejection envelope: {"__ar":1,"error":<code>,
+    // "errorSummary":...,"errorDescription":...}. Means the request was
+    // malformed/stale (e.g. missing build params) or throttled.
+    if (json.errorSummary || typeof json.error === 'number') {
+      const desc = json.errorDescription || json.errorSummary || '';
+      if (/try again|too many|temporarily/i.test(desc)) {
+        return U('UNKNOWN', `Meta throttled the request (error ${json.error}): ${desc}`, 'RATE_LIMIT');
+      }
+      return U('UNKNOWN', `Meta rejected the request (error ${json.error}): ${desc}`);
     }
 
     // GraphQL top-level errors (bad doc_id, bad lsd, auth, throttle, ...).

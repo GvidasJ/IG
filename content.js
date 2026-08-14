@@ -48,14 +48,31 @@ function deriveJazoest(token) {
   return '2' + sum;
 }
 
-async function getLsd() {
-  let lsd = extractLsd(document.documentElement.innerHTML);
-  if (lsd) return lsd;
+// Scrape the build/session params Instagram's own GraphQL POSTs carry. Without
+// them Meta rejects the call with error 1357004 ("close and reopen your
+// browser"). All are embedded in the page's bootstrap JSON.
+function extractBootstrap(html) {
+  const one = (re) => { const m = html.match(re); return m ? m[1] : ''; };
+  return {
+    lsd: extractLsd(html),
+    rev: one(/"__spin_r":(\d+)/) || one(/"client_revision":(\d+)/) || one(/"rev":(\d+)/),
+    spinB: one(/"__spin_b":"([^"]+)"/) || 'trunk',
+    spinT: one(/"__spin_t":(\d+)/),
+    hs: one(/"__hs":"([^"]+)"/) || one(/"haste_session":"([^"]+)"/),
+  };
+}
+
+// Read from the current page; if the essentials (lsd + rev) aren't there,
+// fetch a fresh page and merge what it has.
+async function getBootstrap() {
+  let bp = extractBootstrap(document.documentElement.innerHTML);
+  if (bp.lsd && bp.rev) return bp;
   try {
     const r = await fetch('/accounts/emailsignup/', { credentials: 'same-origin' });
-    lsd = extractLsd(await r.text());
+    const fresh = extractBootstrap(await r.text());
+    for (const k of Object.keys(fresh)) if (!bp[k] && fresh[k]) bp[k] = fresh[k];
   } catch { /* ignore */ }
-  return lsd;
+  return bp;
 }
 
 async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCsrf = false, needsLsd = false }) {
@@ -76,11 +93,23 @@ async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCs
     finalHeaders['x-csrftoken'] = token;
   }
   if (needsLsd) {
-    const lsd = await getLsd();
-    if (!lsd) return { error: 'could not find an LSD token on the page — reload instagram.com' };
-    finalHeaders['x-fb-lsd'] = lsd;
+    const bp = await getBootstrap();
+    if (!bp.lsd) return { error: 'could not find an LSD token on the page — reload instagram.com' };
+    finalHeaders['x-fb-lsd'] = bp.lsd;
+    // Build/session params the real page sends; omit any we couldn't scrape.
+    const dyn = [
+      'av=0', '__d=www', '__user=0', '__a=1', '__req=1', 'dpr=1', '__ccg=EXCELLENT', '__comet_req=7',
+      bp.rev ? `__rev=${bp.rev}` : null,
+      bp.rev ? `__spin_r=${bp.rev}` : null,
+      bp.spinB ? `__spin_b=${encodeURIComponent(bp.spinB)}` : null,
+      bp.spinT ? `__spin_t=${bp.spinT}` : null,
+      bp.hs ? `__hs=${encodeURIComponent(bp.hs)}` : null,
+    ].filter(Boolean).join('&');
     if (typeof body === 'string') {
-      body = body.replace('__LSD__', lsd).replace('__JAZOEST__', deriveJazoest(lsd));
+      body = body
+        .replace('__DYNPARAMS__', dyn)
+        .replace('__LSD__', bp.lsd)
+        .replace('__JAZOEST__', deriveJazoest(bp.lsd));
     }
   }
 
@@ -109,8 +138,10 @@ async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCs
     };
   }
 
+  // Meta prefixes JSON with `for (;;);` as anti-hijacking; strip it before parse.
   let json = null;
-  try { json = JSON.parse(bodyText); } catch { /* not JSON — detector handles it */ }
+  const cleaned = bodyText.replace(/^\s*for\s*\(;;\);/, '');
+  try { json = JSON.parse(cleaned); } catch { /* not JSON — detector handles it */ }
 
   return {
     status: resp.status,

@@ -42,9 +42,43 @@ $('pause-resume').addEventListener('click', async () => {
   refresh();
 });
 
-$('quick-go').addEventListener('click', async () => {
-  $('quick-result').textContent = 'Queue engine not built yet.';
-});
+async function quickCheck() {
+  const handle = $('quick-input').value.trim();
+  if (!handle) return;
+  $('quick-result').textContent = 'queued (canary runs first if stale)…';
+  const resp = await chrome.runtime.sendMessage({ type: 'HH_QUICK_CHECK', handle });
+  if (!resp.ok) {
+    $('quick-result').textContent = resp.error;
+    return;
+  }
+  if (resp.alreadyResolved) {
+    $('quick-result').textContent = `already resolved: ${resp.alreadyResolved} (re-check from the dashboard)`;
+    return;
+  }
+  pollQuickResult(handle.toLowerCase().replace(/^@/, ''));
+}
+
+// Watch storage until the handle resolves; the popup may be closed at any
+// time — the check continues in the background either way.
+function pollQuickResult(handle) {
+  const listener = async () => {
+    const resp = await chrome.runtime.sendMessage({ type: 'HH_GET_STATE' });
+    if (!resp || !resp.ok) return;
+    const item = resp.run.items[handle];
+    if (item && item.state !== 'PENDING') {
+      $('quick-result').innerHTML = '';
+      const pill = document.createElement('span');
+      pill.className = 'pill ' + item.state;
+      pill.textContent = item.state;
+      $('quick-result').append(pill, item.reason ? ` ${item.reason}` : '');
+      chrome.storage.onChanged.removeListener(listener);
+    }
+  };
+  chrome.storage.onChanged.addListener(listener);
+}
+
+$('quick-go').addEventListener('click', quickCheck);
+$('quick-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') quickCheck(); });
 
 chrome.storage.onChanged.addListener(refresh);
 refresh();

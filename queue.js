@@ -1,0 +1,378 @@
+// queue.js — the queue engine, run inside the background service worker.
+// Owns pacing (rate limit + jitter), the hard candidate cap, canary checks,
+// pause/resume, exponential backoff on rate limits, and persistence.
+//
+// Design constraints (deliberate, do not "optimize" away):
+//  * Personal scale: hard cap on queue size, >= 1s between requests, jitter
+//    only ever ADDS delay.
+//  * On any RATE_LIMIT / AUTH / CHALLENGE signal: stop the whole queue and
+//    require a manual resume. No automatic retry, ever.
+//  * Canary before processing: a known-taken handle and a fresh random string
+//    must classify correctly or the run aborts loudly (state canary_failed).
+//  * Everything persisted to chrome.storage.local so the run survives worker
+//    death and browser restarts without re-checking resolved handles.
+
+'use strict';
+
+const HHQueue = (() => {
+  // Module-level (worker-lifetime) loop guard. If the worker dies, storage
+  // still says state=running and the watchdog alarm restarts the loop.
+  let loopToken = 0;
+  let consecutiveUnknowns = 0;
+
+  const RESOLVED = new Set(['AVAILABLE', 'TAKEN']);
+  const PAUSED_STATES = new Set([
+    'paused_user', 'paused_rate_limited', 'paused_logged_out',
+    'paused_challenge', 'paused_tab', 'paused_restart',
+  ]);
+  const CANARY_TTL_MS = 10 * 60 * 1000; // re-run canary if older than this
+  const MAX_CONSECUTIVE_UNKNOWNS = 5;
+
+  // ---- Enqueue ----------------------------------------------------------
+
+  // handles: array or newline string. force=true allows re-adding handles
+  // whose stored result is UNKNOWN (a single manual retry) — never silently.
+  async function enqueue(raw, { force = false } = {}) {
+    const { valid, rejected } = HHValidation.filterList(raw);
+    const [run, results, settings] = await Promise.all(
+      ['run', 'results', 'settings'].map((k) => HHStorage.get(k))
+    );
+
+    if (run.state === 'done' || run.state === 'canary_failed') {
+      // Old run is finished — start a fresh one, keeping global results.
+      Object.assign(run, HHStorage.clone(HHStorage.DEFAULTS.run));
+    }
+
+    const summary = {
+      added: 0,
+      skippedInvalid: rejected,
+      skippedResolved: [],
+      skippedDupe: 0,
+      truncated: 0,
+    };
+
+    const cap = Math.max(1, Math.min(settings.maxQueue, 2000));
+    for (const h of valid) {
+      if (run.items[h]) { summary.skippedDupe++; continue; }
+      const prior = results[h];
+      if (prior && RESOLVED.has(prior.state) && !force) {
+        summary.skippedResolved.push({ handle: h, state: prior.state });
+        continue;
+      }
+      if (run.order.length >= cap) { summary.truncated++; continue; }
+      run.order.push(h);
+      run.items[h] = { state: 'PENDING', reason: '', checkedAt: null };
+      summary.added++;
+    }
+
+    await HHStorage.set('run', run);
+    return summary;
+  }
+
+  // ---- Run control ------------------------------------------------------
+
+  async function start() {
+    const run = await HHStorage.get('run');
+    if (run.state === 'running') return { ok: true, already: true };
+    if (run.state === 'canary_failed') {
+      return { ok: false, error: 'Canary failed — the detector needs fixing (or clear the queue to acknowledge).' };
+    }
+    if (!run.order.some((h) => run.items[h].state === 'PENDING')) {
+      return { ok: false, error: 'Nothing pending in the queue.' };
+    }
+    run.state = 'running';
+    run.stateReason = '';
+    run.startedAt = run.startedAt || Date.now();
+    run.lastTickAt = Date.now();
+    await HHStorage.set('run', run);
+    kickLoop();
+    return { ok: true };
+  }
+
+  async function pause(state = 'paused_user', reason = 'Paused.') {
+    loopToken++; // invalidate any in-flight loop
+    await HHStorage.update('run', { state, stateReason: reason });
+  }
+
+  async function togglePause() {
+    const run = await HHStorage.get('run');
+    if (run.state === 'running') {
+      await pause('paused_user', 'Paused by you.');
+      return { ok: true, state: 'paused_user' };
+    }
+    if (PAUSED_STATES.has(run.state)) {
+      // Manual resume — the only way out of a rate-limit/auth/challenge pause.
+      // Coming out of one of those, the canary cache is dropped so it re-runs.
+      if (['paused_rate_limited', 'paused_logged_out', 'paused_challenge'].includes(run.state)) {
+        run.lastCanaryOkAt = null;
+        await HHStorage.set('run', run);
+      }
+      return start();
+    }
+    return start();
+  }
+
+  async function clear() {
+    loopToken++;
+    consecutiveUnknowns = 0;
+    await HHStorage.set('run', HHStorage.clone(HHStorage.DEFAULTS.run));
+    return { ok: true };
+  }
+
+  // Quick check / single re-check: enqueue one handle (force allows retrying
+  // an UNKNOWN) and start if not already running. This is a single retry —
+  // there is no auto-retry loop anywhere in this file.
+  async function checkOne(handle, { force = false } = {}) {
+    const v = HHValidation.validate(HHValidation.normalize(handle));
+    if (!v.ok) return { ok: false, error: `invalid handle: ${v.reason}` };
+    const run = await HHStorage.get('run');
+    if (PAUSED_STATES.has(run.state)) {
+      return { ok: false, error: 'Queue is paused — resume it first.' };
+    }
+    if (force) {
+      // Allow a re-check even if a result exists: drop it from this run's
+      // items so enqueue re-adds it.
+      const h = HHValidation.normalize(handle);
+      if (run.items[h]) {
+        run.order = run.order.filter((x) => x !== h);
+        delete run.items[h];
+        await HHStorage.set('run', run);
+      }
+    }
+    const summary = await enqueue([handle], { force });
+    if (!summary.added && summary.skippedResolved.length) {
+      const prior = summary.skippedResolved[0];
+      return { ok: true, alreadyResolved: prior.state };
+    }
+    if (!summary.added && !summary.skippedDupe) {
+      return { ok: false, error: 'could not queue handle' };
+    }
+    const started = await start();
+    return started.ok ? { ok: true, queued: true } : started;
+  }
+
+  // ---- The loop ---------------------------------------------------------
+
+  function kickLoop() {
+    const token = ++loopToken;
+    tick(token).catch(async (err) => {
+      console.error('[HandleHunter] loop crashed:', err);
+      await HHStorage.update('run', {
+        state: 'paused_user',
+        stateReason: `Internal error, run paused: ${String(err && err.message || err)}`,
+      });
+    });
+  }
+
+  async function tick(token) {
+    while (true) {
+      if (token !== loopToken) return; // superseded (pause/clear/newer loop)
+      const run = await HHStorage.get('run');
+      if (run.state !== 'running') return;
+      const settings = await HHStorage.get('settings');
+
+      // 1. Canary, if stale or never run.
+      if (!run.lastCanaryOkAt || Date.now() - run.lastCanaryOkAt > CANARY_TTL_MS) {
+        const canaryOk = await runCanary(token, settings);
+        if (!canaryOk) return; // runCanary set the terminal/paused state
+        await HHStorage.update('run', { lastCanaryOkAt: Date.now() });
+        continue;
+      }
+
+      // 2. Next pending handle.
+      const next = run.order.find((h) => run.items[h].state === 'PENDING');
+      if (!next) {
+        await HHStorage.update('run', {
+          state: 'done',
+          stateReason: '',
+          lastTickAt: Date.now(),
+        });
+        return;
+      }
+
+      // 3. Check it.
+      const { state, reason, signal } = await checkHandle(next);
+      if (token !== loopToken) return;
+
+      if (signal) {
+        await handleSignal(signal, next, reason);
+        return;
+      }
+
+      // Re-read before writing: the user may have enqueued more handles
+      // while the request was in flight.
+      const fresh = await HHStorage.get('run');
+      if (fresh.state !== 'running' || !fresh.items[next]) return;
+      fresh.items[next] = { state, reason, checkedAt: Date.now() };
+      fresh.lastTickAt = Date.now();
+      if (state !== 'UNKNOWN') fresh.rateLimitStrikes = 0;
+      await HHStorage.set('run', fresh);
+
+      const results = await HHStorage.get('results');
+      results[next] = { state, reason, checkedAt: Date.now() };
+      await HHStorage.set('results', results);
+
+      // Honesty guard: a stretch of plain UNKNOWNs means the detector is
+      // probably stale — stop burning requests on garbage answers.
+      consecutiveUnknowns = state === 'UNKNOWN' ? consecutiveUnknowns + 1 : 0;
+      if (consecutiveUnknowns >= MAX_CONSECUTIVE_UNKNOWNS) {
+        consecutiveUnknowns = 0;
+        await pause(
+          'paused_user',
+          `${MAX_CONSECUTIVE_UNKNOWNS} consecutive UNKNOWN results — the detector may be out of date (fix detector.js), or Instagram is serving interstitials. Run paused.`
+        );
+        return;
+      }
+
+      // 4. Wait: base rate + additive jitter. Never faster than the base.
+      await sleep(delayMs(settings));
+    }
+  }
+
+  function delayMs(settings) {
+    const base = Math.max(1, Number(settings.rateSeconds) || 4) * 1000;
+    const jitter = Math.max(0, Number(settings.jitterFrac) || 0);
+    return Math.round(base * (1 + Math.random() * jitter));
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // ---- Canary -----------------------------------------------------------
+
+  async function runCanary(token, settings) {
+    const takenRes = await checkHandle(HHDetector.CANARY_TAKEN);
+    if (token !== loopToken) return false;
+    if (takenRes.signal) { await handleSignal(takenRes.signal, '(canary)', takenRes.reason); return false; }
+
+    await sleep(delayMs(settings));
+    if (token !== loopToken) return false;
+
+    const randomHandle = HHDetector.makeCanaryRandom();
+    const randomRes = await checkHandle(randomHandle);
+    if (token !== loopToken) return false;
+    if (randomRes.signal) { await handleSignal(randomRes.signal, '(canary)', randomRes.reason); return false; }
+
+    const verdict = HHDetector.evaluateCanary(takenRes, randomRes);
+    if (!verdict.ok) {
+      loopToken++;
+      await HHStorage.update('run', {
+        state: 'canary_failed',
+        stateReason:
+          'CANARY FAILED — the detector cannot be trusted and this run was aborted. ' +
+          verdict.failures.join(' | ') +
+          ' — Instagram has probably changed its responses; detector.js needs updating. No results were produced.',
+      });
+      return false;
+    }
+    await sleep(delayMs(settings));
+    return token === loopToken;
+  }
+
+  // ---- Signals (rate limit / auth / challenge) --------------------------
+
+  async function handleSignal(signal, handle, reason) {
+    loopToken++;
+    const run = await HHStorage.get('run');
+
+    if (signal === 'RATE_LIMIT') {
+      run.rateLimitStrikes = (run.rateLimitStrikes || 0) + 1;
+      // Exponential backoff ADVICE: 5, 10, 20, 40, 80 min, capped at 2h.
+      // Resuming is always manual; this is the recommended wait, not a timer
+      // that auto-restarts anything.
+      const mins = Math.min(5 * 2 ** (run.rateLimitStrikes - 1), 120);
+      run.resumeAdvisedAt = Date.now() + mins * 60 * 1000;
+      run.state = 'paused_rate_limited';
+      run.stateReason =
+        `Paused — Instagram is rate-limiting (${reason}). ` +
+        `Wait ~${mins} min, then press Resume. Resuming early risks a longer block.`;
+    } else if (signal === 'AUTH') {
+      run.state = 'paused_logged_out';
+      run.stateReason =
+        `Paused — you appear to be logged out of Instagram (${reason}). ` +
+        'Log in at instagram.com in a normal tab, then press Resume.';
+    } else {
+      run.state = 'paused_challenge';
+      run.stateReason =
+        `Paused — Instagram is asking for a manual challenge/checkpoint (${reason}). ` +
+        'Open instagram.com, complete it yourself, then press Resume.';
+    }
+    run.lastTickAt = Date.now();
+    await HHStorage.set('run', run);
+  }
+
+  // ---- Checking one handle via the content script -----------------------
+
+  async function checkHandle(username) {
+    const tab = await ensureInstagramTab();
+    if (!tab.ok) {
+      loopToken++;
+      await HHStorage.update('run', { state: 'paused_tab', stateReason: tab.error });
+      return { state: 'UNKNOWN', reason: tab.error, signal: null, aborted: true };
+    }
+    const req = HHDetector.buildRequest(username);
+    let obs;
+    try {
+      obs = await chrome.tabs.sendMessage(tab.tabId, {
+        type: 'HH_FETCH', url: req.url, headers: req.headers,
+      });
+    } catch (err) {
+      obs = { error: `content script unreachable: ${String(err && err.message || err)}` };
+    }
+    return HHDetector.classify(username, obs);
+  }
+
+  // Find (or open) an instagram.com tab with a live content script. The tab
+  // is opened in the background, once, and reused; the user can watch it.
+  async function ensureInstagramTab() {
+    const tabs = await chrome.tabs.query({ url: 'https://www.instagram.com/*' });
+    for (const t of tabs) {
+      if (await ping(t.id)) return { ok: true, tabId: t.id };
+    }
+    let tab;
+    if (tabs.length) {
+      // Tab exists but the content script isn't there (installed after the
+      // tab loaded). Reload so the manifest-declared script attaches — this
+      // avoids needing the broader "scripting" permission.
+      tab = tabs[0];
+      await chrome.tabs.reload(tab.id);
+    } else {
+      tab = await chrome.tabs.create({ url: 'https://www.instagram.com/', active: false });
+    }
+    for (let i = 0; i < 30; i++) {
+      await sleep(1000);
+      if (await ping(tab.id)) return { ok: true, tabId: tab.id };
+    }
+    return {
+      ok: false,
+      error: 'Paused — could not reach the Instagram tab (it may have been closed or failed to load). Reopen instagram.com, then press Resume.',
+    };
+  }
+
+  async function ping(tabId) {
+    try {
+      const r = await chrome.tabs.sendMessage(tabId, { type: 'HH_PING' });
+      return !!(r && r.alive);
+    } catch {
+      return false;
+    }
+  }
+
+  // ---- Watchdog ---------------------------------------------------------
+  // Called from the 1-minute alarm: if storage says running but no tick has
+  // happened recently (worker was killed mid-run), restart the loop.
+  async function watchdog() {
+    const run = await HHStorage.get('run');
+    if (run.state !== 'running') return;
+    const settings = await HHStorage.get('settings');
+    const staleAfter = Math.max(30000, settings.rateSeconds * 1000 * 3 + 15000);
+    if (!run.lastTickAt || Date.now() - run.lastTickAt > staleAfter) {
+      kickLoop();
+    }
+  }
+
+  return { enqueue, start, pause, togglePause, clear, checkOne, watchdog, kickLoop };
+})();
+
+if (typeof globalThis !== 'undefined') globalThis.HHQueue = HHQueue;

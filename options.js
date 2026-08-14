@@ -233,6 +233,51 @@ async function verifyRow(handle, btn) {
   refresh();
 }
 
+async function verifyAllSignups() {
+  // Count what would run so the warning is concrete.
+  const rows = allRows().filter((r) => r.state === 'AVAILABLE' && !(r.signup && r.signup.state));
+  if (!rows.length) {
+    $('paste-feedback').textContent = 'No AVAILABLE names left to verify at signup.';
+    return;
+  }
+  const secs = Math.round(rows.length * secPerCheck());
+  const ok = confirm(
+    `Verify ${rows.length} AVAILABLE name(s) at signup?\n\n` +
+    `This walks them through Instagram's signup validator at the same safe ` +
+    `rate as everything else (~${fmtDuration(secs)} total), and STOPS on the ` +
+    `first sign of rate-limiting. It runs only over names with no existing ` +
+    `profile — never a bulk blast. Continue?`
+  );
+  if (!ok) return;
+  const resp = await chrome.runtime.sendMessage({ type: 'HH_VERIFY_ALL' });
+  if (!resp.ok) $('paste-feedback').textContent = resp.error;
+  refresh();
+}
+
+function renderSignupBatch(sr) {
+  const bar = $('signup-batch-bar');
+  if (!sr || sr.state === 'idle') { bar.className = 'banner info hidden'; return; }
+  const total = sr.order.length;
+  const done = sr.order.filter((h) => sr.items[h] && sr.items[h].state !== 'PENDING').length;
+  const toggle = $('signup-batch-toggle');
+
+  if (sr.state === 'running') {
+    bar.className = 'banner info';
+    $('signup-batch-text').textContent = `Signup verification running — ${done}/${total} finalists checked.`;
+    toggle.textContent = 'Pause';
+  } else if (sr.state === 'done') {
+    if (done === 0) { bar.className = 'banner info hidden'; return; }
+    bar.className = 'banner info';
+    $('signup-batch-text').textContent = `Signup verification done — ${done}/${total} checked. See the Signup column.`;
+    toggle.textContent = 'Dismiss';
+  } else {
+    // paused of some kind
+    bar.className = 'banner warn';
+    $('signup-batch-text').textContent = `⏸ ${sr.stateReason || 'Signup verification paused.'} (${done}/${total})`;
+    toggle.textContent = /canary/i.test(sr.stateReason) ? 'Dismiss' : 'Resume';
+  }
+}
+
 // =======================================================================
 // Status bar + banner
 // =======================================================================
@@ -514,6 +559,7 @@ async function refresh() {
     if (!resp || !resp.ok) return;
     lastState = resp;
     renderStatus(resp.run, resp.settings);
+    renderSignupBatch(resp.signupRun);
     renderTable();
     renderFavorites();
     renderSettings(resp.settings);
@@ -565,6 +611,17 @@ function wire() {
 
   $('export-txt').addEventListener('click', () => exportRows('txt'));
   $('export-csv').addEventListener('click', () => exportRows('csv'));
+
+  $('verify-all').addEventListener('click', verifyAllSignups);
+  $('signup-batch-toggle').addEventListener('click', async () => {
+    const sr = lastState && lastState.signupRun;
+    if (sr && (sr.state === 'done' || /canary/i.test(sr.stateReason || ''))) {
+      await chrome.runtime.sendMessage({ type: 'HH_CLEAR_SIGNUP' });
+    } else {
+      await chrome.runtime.sendMessage({ type: 'HH_TOGGLE_SIGNUP_PAUSE' });
+    }
+    refresh();
+  });
 
   chrome.storage.onChanged.addListener(refresh);
   // Live countdown for the rate-limit banner.

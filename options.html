@@ -65,9 +65,14 @@
           <button data-filter="PENDING">Pending</button>
         </div>
         <div>
+          <button id="verify-all">Verify all available (signup)</button>
           <button id="export-txt">Export .txt</button>
           <button id="export-csv">Export .csv</button>
         </div>
+      </div>
+      <div id="signup-batch-bar" class="banner info hidden">
+        <span id="signup-batch-text"></span>
+        <button id="signup-batch-toggle" class="rowbtn" style="margin-left:8px"></button>
       </div>
       <div class="small dim" id="available-note">
         <b>State</b> = does an account exist (green AVAILABLE = no profile found).

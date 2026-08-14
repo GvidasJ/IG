@@ -394,6 +394,170 @@ const HHQueue = (() => {
     return { ok: true, signup };
   }
 
+  // ---- Signup BATCH: verify all AVAILABLE finalists, safely --------------
+  // Same rate limit, jitter, canary and hard-stop-on-anti-bot as the
+  // availability queue. Separate loop token and separate storage key so it
+  // never interleaves with, or shares a request budget with, the main queue.
+
+  let signupLoopToken = 0;
+
+  // Collect handles worth verifying: latest availability verdict is AVAILABLE
+  // and they don't already have a signup verdict (unless re-running).
+  async function collectSignupTargets() {
+    const [run, results] = await Promise.all([HHStorage.get('run'), HHStorage.get('results')]);
+    const latest = new Map();
+    for (const [h, r] of Object.entries(results)) latest.set(h, r);
+    for (const h of run.order) latest.set(h, Object.assign({}, latest.get(h), run.items[h]));
+    const targets = [];
+    for (const [h, r] of latest.entries()) {
+      if (r && r.state === 'AVAILABLE' && !(r.signup && r.signup.state)) targets.push(h);
+    }
+    return targets.sort();
+  }
+
+  async function startSignupBatch() {
+    const run = await HHStorage.get('run');
+    if (run.state === 'running') {
+      return { ok: false, error: 'Pause the availability queue first — signup verification runs on its own so they never share the rate limit.' };
+    }
+    let sr = await HHStorage.get('signupRun');
+
+    // Resume an interrupted batch, or build a fresh one.
+    const hasPending = sr.order.some((h) => sr.items[h] && sr.items[h].state === 'PENDING');
+    if (!hasPending || sr.state === 'done' || sr.state === 'idle') {
+      const targets = await collectSignupTargets();
+      if (!targets.length) {
+        return { ok: false, error: 'No AVAILABLE names left to verify. Run an availability check first, or your finalists are already verified (see the Signup column).' };
+      }
+      const settings = await HHStorage.get('settings');
+      const capped = targets.slice(0, settings.maxQueue);
+      sr = HHStorage.clone(HHStorage.DEFAULTS.signupRun);
+      sr.order = capped;
+      for (const h of capped) sr.items[h] = { state: 'PENDING', reason: '', checkedAt: null };
+      sr.truncated = targets.length - capped.length;
+    }
+    if (['paused_rate_limited', 'paused_logged_out', 'paused_challenge'].includes(sr.state)) {
+      sr.lastCanaryOkAt = null; // re-prove after a block-pause
+    }
+    sr.state = 'running';
+    sr.stateReason = '';
+    sr.lastTickAt = Date.now();
+    await HHStorage.set('signupRun', sr);
+    kickSignupLoop();
+    return { ok: true, count: sr.order.filter((h) => sr.items[h].state === 'PENDING').length };
+  }
+
+  async function toggleSignupPause() {
+    const sr = await HHStorage.get('signupRun');
+    if (sr.state === 'running') {
+      signupLoopToken++;
+      await HHStorage.update('signupRun', { state: 'paused_user', stateReason: 'Signup verification paused by you.' });
+      return { ok: true, state: 'paused_user' };
+    }
+    return startSignupBatch();
+  }
+
+  function kickSignupLoop() {
+    const token = ++signupLoopToken;
+    signupTick(token).catch(async (err) => {
+      console.error('[HandleHunter] signup loop crashed:', err);
+      await HHStorage.update('signupRun', { state: 'paused_user', stateReason: `Internal error, signup batch paused: ${String(err && err.message || err)}` });
+    });
+  }
+
+  async function signupTick(token) {
+    while (true) {
+      if (token !== signupLoopToken) return;
+      const sr = await HHStorage.get('signupRun');
+      if (sr.state !== 'running') return;
+      const settings = await HHStorage.get('settings');
+
+      // Canary before processing / after any block-pause.
+      if (!sr.lastCanaryOkAt || Date.now() - sr.lastCanaryOkAt > 10 * 60 * 1000) {
+        const ok = await runSignupCanary(token, settings);
+        if (!ok) return;
+        await HHStorage.update('signupRun', { lastCanaryOkAt: Date.now() });
+        continue;
+      }
+
+      const next = sr.order.find((h) => sr.items[h].state === 'PENDING');
+      if (!next) {
+        await HHStorage.update('signupRun', { state: 'done', stateReason: '', lastTickAt: Date.now() });
+        return;
+      }
+
+      const res = await rawSignup(next);
+      if (token !== signupLoopToken) return;
+      if (res.signal) { await signupHandleSignal(res.signal, res.reason); return; }
+
+      const signup = { state: res.state, reason: res.reason, checkedAt: Date.now() };
+      const results = await HHStorage.get('results');
+      results[next] = Object.assign(results[next] || {}, { signup });
+      await HHStorage.set('results', results);
+
+      const fresh = await HHStorage.get('signupRun');
+      if (fresh.state !== 'running' || !fresh.items[next]) return;
+      fresh.items[next] = signup;
+      fresh.lastTickAt = Date.now();
+      if (res.state !== 'UNKNOWN') fresh.rateLimitStrikes = 0;
+      await HHStorage.set('signupRun', fresh);
+
+      await sleep(delayMs(settings));
+    }
+  }
+
+  async function runSignupCanary(token, settings) {
+    const blocked = await rawSignup(HHSignup.CANARY_BLOCKED);
+    if (token !== signupLoopToken) return false;
+    if (blocked.signal) { await signupHandleSignal(blocked.signal, blocked.reason); return false; }
+    await sleep(delayMs(settings));
+    if (token !== signupLoopToken) return false;
+    const rnd = await rawSignup(HHSignup.makeCanaryRandom());
+    if (token !== signupLoopToken) return false;
+    if (rnd.signal) { await signupHandleSignal(rnd.signal, rnd.reason); return false; }
+
+    const verdict = HHSignup.evaluateCanary(blocked, rnd);
+    if (!verdict.ok) {
+      signupLoopToken++;
+      await HHStorage.update('signupRun', {
+        state: 'paused_user',
+        stateReason:
+          'SIGNUP CANARY FAILED — signup verification aborted, no verdicts trusted. ' +
+          verdict.failures.join(' | ') +
+          `. Raw → ${describeObs('known-blocked', blocked)} ‖ ${describeObs('random', rnd)}`,
+      });
+      return false;
+    }
+    await sleep(delayMs(settings));
+    return token === signupLoopToken;
+  }
+
+  async function signupHandleSignal(signal, reason) {
+    signupLoopToken++;
+    const sr = await HHStorage.get('signupRun');
+    if (signal === 'RATE_LIMIT') {
+      sr.rateLimitStrikes = (sr.rateLimitStrikes || 0) + 1;
+      const mins = Math.min(5 * 2 ** (sr.rateLimitStrikes - 1), 120);
+      sr.resumeAdvisedAt = Date.now() + mins * 60 * 1000;
+      sr.state = 'paused_rate_limited';
+      sr.stateReason = `Signup verification paused — Instagram is rate-limiting (${reason}). Wait ~${mins} min, then resume.`;
+    } else if (signal === 'AUTH') {
+      sr.state = 'paused_logged_out';
+      sr.stateReason = `Signup verification paused — ${reason}`;
+    } else {
+      sr.state = 'paused_challenge';
+      sr.stateReason = `Signup verification paused — Instagram wants a manual challenge (${reason}). Complete it, then resume.`;
+    }
+    sr.lastTickAt = Date.now();
+    await HHStorage.set('signupRun', sr);
+  }
+
+  async function clearSignupBatch() {
+    signupLoopToken++;
+    await HHStorage.set('signupRun', HHStorage.clone(HHStorage.DEFAULTS.signupRun));
+    return { ok: true };
+  }
+
   // One-line raw-response summary for canary failure banners, so a broken
   // detector can be fixed from the banner alone instead of guessing.
   function describeObs(label, res) {
@@ -444,16 +608,23 @@ const HHQueue = (() => {
   // Called from the 1-minute alarm: if storage says running but no tick has
   // happened recently (worker was killed mid-run), restart the loop.
   async function watchdog() {
-    const run = await HHStorage.get('run');
-    if (run.state !== 'running') return;
     const settings = await HHStorage.get('settings');
     const staleAfter = Math.max(30000, settings.rateSeconds * 1000 * 3 + 15000);
-    if (!run.lastTickAt || Date.now() - run.lastTickAt > staleAfter) {
+    const run = await HHStorage.get('run');
+    if (run.state === 'running' && (!run.lastTickAt || Date.now() - run.lastTickAt > staleAfter)) {
       kickLoop();
+    }
+    const sr = await HHStorage.get('signupRun');
+    if (sr.state === 'running' && (!sr.lastTickAt || Date.now() - sr.lastTickAt > staleAfter)) {
+      kickSignupLoop();
     }
   }
 
-  return { enqueue, start, pause, togglePause, clear, checkOne, verifySignup, watchdog, kickLoop };
+  return {
+    enqueue, start, pause, togglePause, clear, checkOne, verifySignup,
+    startSignupBatch, toggleSignupPause, clearSignupBatch,
+    watchdog, kickLoop,
+  };
 })();
 
 if (typeof globalThis !== 'undefined') globalThis.HHQueue = HHQueue;

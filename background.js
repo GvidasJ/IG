@@ -45,8 +45,19 @@ async function handleMessage(msg /*, sender */) {
       return HHQueue.checkOne(msg.handle, { force: true });
 
     case 'HH_VERIFY_SIGNUP':
-      // Single manual "can I actually register this?" check. Never bulk.
+      // Single manual "can I actually register this?" check.
       return HHQueue.verifySignup(msg.handle);
+
+    case 'HH_VERIFY_ALL':
+      // Batch signup verification over AVAILABLE finalists, at the same safe
+      // pace and with the same hard-stop-on-anti-bot as the availability queue.
+      return HHQueue.startSignupBatch();
+
+    case 'HH_TOGGLE_SIGNUP_PAUSE':
+      return HHQueue.toggleSignupPause();
+
+    case 'HH_CLEAR_SIGNUP':
+      return HHQueue.clearSignupBatch();
 
     case 'HH_SET_SETTINGS': {
       // Sanity clamps; the UI is responsible for warning before raising
@@ -99,6 +110,13 @@ chrome.runtime.onStartup.addListener(async () => {
     await HHStorage.update('run', {
       state: 'paused_restart',
       stateReason: 'Browser restarted mid-run. Progress is saved — press Resume.',
+    });
+  }
+  const sr = await HHStorage.get('signupRun');
+  if (sr.state === 'running') {
+    await HHStorage.update('signupRun', {
+      state: 'paused_restart',
+      stateReason: 'Browser restarted during signup verification. Progress is saved — press Resume.',
     });
   }
 });

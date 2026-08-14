@@ -13,6 +13,7 @@
 
 const store = {};
 const responses = {}; // username -> observation returned by the "content script"
+const signupResponses = {}; // username -> observation for the signup POST
 
 global.chrome = {
   storage: {
@@ -35,6 +36,13 @@ global.chrome = {
     async sendMessage(tabId, msg) {
       if (msg.type === 'HH_PING') return { ok: true, alive: true };
       if (msg.type === 'HH_FETCH') {
+        // Signup POST to the account-attempt endpoint.
+        if (msg.method === 'POST' && /web_create_ajax/.test(msg.url)) {
+          const u = decodeURIComponent((msg.body.match(/username=([^&]*)/) || [])[1] || '');
+          if (signupResponses[u]) return signupResponses[u];
+          // default (random canary): registerable — only other-field errors
+          return { status: 400, contentType: 'application/json', json: { account_created: false, errors: { email: ['Enter a valid email.'] }, status: 'fail' } };
+        }
         const m = msg.url.match(/username=([^&]+)/);
         const u = decodeURIComponent(m[1]);
         if (responses[u]) return responses[u];
@@ -54,6 +62,7 @@ const path = require('path');
 const load = (f) => eval(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'));
 load('storage.js');
 load('detector.js');
+load('signup.js');
 load('validation.js');
 load('queue.js');
 
@@ -144,6 +153,58 @@ async function waitFor(pred, timeoutMs, label) {
   const checked = unknowns.filter((u) => run.items[u].state === 'UNKNOWN').length;
   assert(checked === 5, `paused after exactly 5 consecutive UNKNOWNs (got ${checked})`);
 
+  console.log('— signup batch: canary, classify, safe pacing, completion —');
+  await HHQueue.clear();
+  await HHQueue.clearSignupBatch();
+  // Seed availability results: two AVAILABLE finalists + one TAKEN (ignored).
+  await HHStorage.set('results', {
+    freea: { state: 'AVAILABLE', reason: '', checkedAt: Date.now() },
+    freeb: { state: 'AVAILABLE', reason: '', checkedAt: Date.now() },
+    takenx: { state: 'TAKEN', reason: '', checkedAt: Date.now() },
+  });
+  const BLOCK = () => ({ status: 400, contentType: 'application/json', json: { account_created: false, errors: { username: ["This username isn't available."], email: ['x'] }, status: 'fail' } });
+  const REG = () => ({ status: 400, contentType: 'application/json', json: { account_created: false, errors: { email: ['x'] }, status: 'fail' } });
+  signupResponses[HHSignup.CANARY_BLOCKED] = BLOCK();
+  signupResponses['freea'] = REG();
+  signupResponses['freeb'] = BLOCK(); // reserved despite no profile — the whole point
+  const startB = await HHQueue.startSignupBatch();
+  assert(startB.ok && startB.count === 2, `batch targets only the 2 AVAILABLE names (got ${startB.count})`);
+  let sr = await waitFor2('signupRun', (r) => r.state === 'done', 30000, 'signup batch done');
+  const res2 = await HHStorage.get('results');
+  assert(res2.freea.signup && res2.freea.signup.state === 'REGISTERABLE', 'freea -> REGISTERABLE');
+  assert(res2.freeb.signup && res2.freeb.signup.state === 'BLOCKED', 'freeb -> BLOCKED (reserved, no profile)');
+  assert(!res2.takenx.signup, 'TAKEN name never verified at signup');
+
+  console.log('— signup batch: hard stop on rate-limit —');
+  await HHQueue.clearSignupBatch();
+  await HHStorage.set('results', {
+    q1: { state: 'AVAILABLE', reason: '', checkedAt: Date.now() },
+    q2: { state: 'AVAILABLE', reason: '', checkedAt: Date.now() },
+  });
+  signupResponses[HHSignup.CANARY_BLOCKED] = BLOCK();
+  signupResponses['q1'] = REG();
+  signupResponses['q2'] = { status: 429, contentType: 'application/json', json: { message: 'Please wait a few minutes before you try again.' } };
+  await HHQueue.startSignupBatch();
+  sr = await waitFor2('signupRun', (r) => r.state === 'paused_rate_limited', 30000, 'signup batch rate-limit stop');
+  assert(sr.resumeAdvisedAt > Date.now() && sr.rateLimitStrikes === 1, 'signup batch recorded backoff on 429');
+  assert(sr.items['q2'].state === 'PENDING', 'rate-limited signup item stays PENDING for resume');
+
+  console.log('— signup batch refuses to run while availability queue is live —');
+  await HHQueue.clearSignupBatch();
+  await HHStorage.set('run', Object.assign(await HHStorage.get('run'), { state: 'running' }));
+  const refused = await HHQueue.startSignupBatch();
+  assert(refused.ok === false && /Pause the availability queue/.test(refused.error), 'batch refuses while availability queue runs');
+
   console.log(failures ? `\n${failures} FAILURES` : '\nall queue-sim checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error('SIM CRASHED:', err); process.exit(1); });
+
+async function waitFor2(key, pred, timeoutMs, label) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const v = await HHStorage.get(key);
+    if (pred(v)) return v;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error('timeout waiting for: ' + label);
+}

@@ -45,13 +45,19 @@ signup form makes as you type):
 - 🟢 `REGISTERABLE` — the signup validator accepted the username.
 - ⚪ `BLOCKED` — reserved/taken/invalid at signup, even if no profile exists.
 
-This is deliberately **one manual click per name — never bulk**. That endpoint
-is the most abuse-monitored on the site, so the tool refuses to automate it at
-scale; you verify only your handful of finalists. The request is built to
+Per-row **Verify** is one request. There's also a **Verify all available
+(signup)** button that walks every AVAILABLE-but-unverified finalist through
+the validator **at the same safe rate as the availability queue** (1 req /
+4 s + jitter), stops on the first rate-limit/anti-bot response with the same
+exponential backoff, and only ever targets names with no existing profile —
+never a bulk blast of hundreds. It shows a progress bar you can pause/resume,
+and survives restarts like the main queue. This endpoint is the most
+abuse-monitored on the site, so even the batch stays at personal pace on
+purpose — going faster is what risks your own account. The request is built to
 **never create an account** (empty email + unusable password), and it has its
 own canary (`@instagram` must come back `BLOCKED`, a random string
-`REGISTERABLE`) — if that fails, the verdict is not trusted and the banner
-shows the raw response. All of this lives isolated in `signup.js`.
+`REGISTERABLE`) — if that fails, no verdict is trusted and the banner shows the
+raw response. All of this lives isolated in `signup.js`.
 
 If the signup canary fails in your browser, capture the real request (DevTools
 → Network, while typing a username into

@@ -45,6 +45,22 @@ const HHStorage = (() => {
       lastSignupCanaryOkAt: null,
       lastTickAt: null,
     },
+    // Separate, opt-in batch that walks AVAILABLE finalists through the signup
+    // validator at the SAME safe pace as the availability queue, with the same
+    // canary gate and the same hard-stop-on-anti-bot behavior. Kept apart from
+    // `run` so the two never share a request budget or interleave.
+    signupRun: {
+      // idle | running | paused_user | paused_rate_limited | paused_logged_out
+      // | paused_challenge | paused_tab | paused_restart | done
+      state: 'idle',
+      stateReason: '',
+      order: [],
+      items: {}, // handle -> { state: PENDING|REGISTERABLE|BLOCKED|UNKNOWN, reason, checkedAt }
+      rateLimitStrikes: 0,
+      resumeAdvisedAt: null,
+      lastCanaryOkAt: null,
+      lastTickAt: null,
+    },
     results: {},
     favorites: [],
   };
@@ -64,10 +80,10 @@ const HHStorage = (() => {
   }
 
   async function getAll() {
-    const [settings, run, results, favorites] = await Promise.all(
-      ['settings', 'run', 'results', 'favorites'].map(get)
+    const [settings, run, signupRun, results, favorites] = await Promise.all(
+      ['settings', 'run', 'signupRun', 'results', 'favorites'].map(get)
     );
-    return { settings, run, results, favorites };
+    return { settings, run, signupRun, results, favorites };
   }
 
   async function set(key, value) {

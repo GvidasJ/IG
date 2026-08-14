@@ -38,10 +38,16 @@ global.chrome = {
       if (msg.type === 'HH_FETCH') {
         // Signup validation POST to the GraphQL endpoint.
         if (msg.method === 'POST' && /\/api\/graphql/.test(msg.url)) {
+          global.signupCallCount = (global.signupCallCount || 0) + 1;
           // username lives inside the url-encoded `variables` JSON
           const vm = msg.body.match(/variables=([^&]*)/);
           const vars = vm ? JSON.parse(decodeURIComponent(vm[1])) : {};
           const u = vars.input && vars.input.username && vars.input.username.sensitive_string_value || '';
+          // Simulate a soft-block: after N signup calls, Instagram FALSELY
+          // reports every name (even fresh random canary strings) as taken.
+          if (global.softBlockAfter && global.signupCallCount > global.softBlockAfter) {
+            return { status: 200, contentType: 'application/json', json: { data: { xfb_caa_registration_field_validation: { status: 'SUCCESS', error: { code: 'taken', field: 'USERNAME', message: "This username isn't available." }, username_suggestions: ['a'] } } } };
+          }
           if (signupResponses[u]) return signupResponses[u];
           // default (random canary): registerable — SUCCESS, no error
           return { status: 200, contentType: 'application/json', json: { data: { xfb_caa_registration_field_validation: { status: 'SUCCESS', error: { code: null, field: 'USERNAME', message: null }, username_suggestions: [] } } } };
@@ -201,6 +207,26 @@ async function waitFor(pred, timeoutMs, label) {
   sr = await waitFor2('signupRun', (r) => r.state === 'paused_rate_limited', 30000, 'signup batch rate-limit stop');
   assert(sr.resumeAdvisedAt > Date.now() && sr.rateLimitStrikes === 1, 'signup batch recorded backoff on 429');
   assert(sr.items['q2'].state === 'PENDING', 'rate-limited signup item stays PENDING for resume');
+
+  console.log('— signup batch catches a mid-batch soft-block and reverts —');
+  await HHQueue.clearSignupBatch();
+  await HHStorage.set('settings', { rateSeconds: 1, jitterFrac: 0, maxQueue: 50 });
+  await HHStorage.set('run', Object.assign(await HHStorage.get('run'), { state: 'idle' }));
+  const many = {};
+  for (let i = 0; i < 20; i++) many['sb' + i] = { state: 'AVAILABLE', reason: '', checkedAt: Date.now() };
+  await HHStorage.set('results', many);
+  for (const h of Object.keys(many)) signupResponses[h] = REG();
+  // Let the opening canary + a handful pass, then soft-block kicks in; the
+  // 15-check re-canary must catch it (random canary comes back BLOCKED).
+  global.signupCallCount = 0;
+  global.softBlockAfter = 8;
+  await HHQueue.startSignupBatch();
+  sr = await waitFor2('signupRun', (r) => r.state === 'paused_rate_limited', 60000, 'soft-block caught');
+  assert(/soft-block/i.test(sr.stateReason), 'soft-block detected and surfaced');
+  const res3 = await HHStorage.get('results');
+  const anyFalseBlocked = Object.keys(many).some((h) => res3[h].signup && res3[h].signup.state === 'BLOCKED');
+  assert(!anyFalseBlocked, 'no false BLOCKED verdict survives (suspect results reverted)');
+  global.softBlockAfter = 0;
 
   console.log('— signup batch refuses to run while availability queue is live —');
   await HHQueue.clearSignupBatch();

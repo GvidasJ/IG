@@ -445,6 +445,7 @@ const HHQueue = (() => {
     sr.stateReason = '';
     sr.lastTickAt = Date.now();
     await HHStorage.set('signupRun', sr);
+    signupSinceCanary = 0;
     kickSignupLoop();
     return { ok: true, count: sr.order.filter((h) => sr.items[h].state === 'PENDING').length };
   }
@@ -467,6 +468,15 @@ const HHQueue = (() => {
     });
   }
 
+  // How many signup checks between canary re-verifications. Small on purpose:
+  // Instagram soft-blocks the signup validator under bulk load by FALSELY
+  // reporting names as taken, so we re-prove the canary often — the moment a
+  // known-free random string starts coming back BLOCKED, the batch aborts
+  // instead of emitting false BLOCKED verdicts (the REGISTERABLE->BLOCKED flip
+  // observed live 2026-08-15).
+  const SIGNUP_CANARY_EVERY = 15;
+  let signupSinceCanary = 0;
+
   async function signupTick(token) {
     while (true) {
       if (token !== signupLoopToken) return;
@@ -474,10 +484,13 @@ const HHQueue = (() => {
       if (sr.state !== 'running') return;
       const settings = await HHStorage.get('settings');
 
-      // Canary before processing / after any block-pause.
-      if (!sr.lastCanaryOkAt || Date.now() - sr.lastCanaryOkAt > 10 * 60 * 1000) {
+      // Canary before processing, after any block-pause, on a time budget, and
+      // every SIGNUP_CANARY_EVERY checks to catch a mid-batch soft-block fast.
+      if (!sr.lastCanaryOkAt || Date.now() - sr.lastCanaryOkAt > 10 * 60 * 1000 ||
+          signupSinceCanary >= SIGNUP_CANARY_EVERY) {
         const ok = await runSignupCanary(token, settings);
         if (!ok) return;
+        signupSinceCanary = 0;
         await HHStorage.update('signupRun', { lastCanaryOkAt: Date.now() });
         continue;
       }
@@ -503,6 +516,7 @@ const HHQueue = (() => {
       fresh.lastTickAt = Date.now();
       if (res.state !== 'UNKNOWN') fresh.rateLimitStrikes = 0;
       await HHStorage.set('signupRun', fresh);
+      signupSinceCanary++;
 
       await sleep(delayMs(settings));
     }
@@ -521,13 +535,28 @@ const HHQueue = (() => {
     const verdict = HHSignup.evaluateCanary(blocked, rnd);
     if (!verdict.ok) {
       signupLoopToken++;
-      await HHStorage.update('signupRun', {
-        state: 'paused_user',
-        stateReason:
-          'SIGNUP CANARY FAILED — signup verification aborted, no verdicts trusted. ' +
-          verdict.failures.join(' | ') +
-          `. Raw → ${describeObs('known-blocked', blocked)} ‖ ${describeObs('random', rnd)}`,
-      });
+      const sr = await HHStorage.get('signupRun');
+      // Everything verified since the last GOOD canary is suspect (it may be a
+      // false BLOCKED from a soft-block); revert those to PENDING so they get
+      // re-checked on resume, and drop their signup verdict from results.
+      const cutoff = sr.lastCanaryOkAt || 0;
+      const results = await HHStorage.get('results');
+      let reverted = 0;
+      for (const h of sr.order) {
+        const it = sr.items[h];
+        if (it && it.state !== 'PENDING' && (it.checkedAt || 0) > cutoff) {
+          sr.items[h] = { state: 'PENDING', reason: '', checkedAt: null };
+          if (results[h] && results[h].signup) { delete results[h].signup; }
+          reverted++;
+        }
+      }
+      sr.state = 'paused_rate_limited';
+      sr.resumeAdvisedAt = Date.now() + 20 * 60 * 1000;
+      sr.stateReason = verdict.failures.some((f) => /random/.test(f))
+        ? `Signup verification paused — Instagram started soft-blocking (falsely reporting names as taken). Reverted the last ${reverted} result(s) as untrustworthy. Wait ~20 min, then resume; earlier verdicts are kept. Raw → ${describeObs('random', rnd)}`
+        : `SIGNUP CANARY FAILED — ${verdict.failures.join(' | ')}. Raw → ${describeObs('known-blocked', blocked)} ‖ ${describeObs('random', rnd)}`;
+      await HHStorage.set('results', results);
+      await HHStorage.set('signupRun', sr);
       return false;
     }
     await sleep(delayMs(settings));

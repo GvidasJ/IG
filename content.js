@@ -55,6 +55,11 @@ function extractBootstrap(html) {
   const one = (re) => { const m = html.match(re); return m ? m[1] : ''; };
   return {
     lsd: extractLsd(html),
+    // fb_dtsg: the logged-in CSRF token GraphQL requires. Absent when logged
+    // out (signup uses lsd only); present in every logged-in page's bootstrap.
+    dtsg: one(/\["DTSGInitialData",\[\],\{"token":"([^"]+)"\}/) ||
+          one(/"dtsg":\{"token":"([^"]+)"\}/) ||
+          one(/name="fb_dtsg"\s+value="([^"]+)"/),
     rev: one(/"__spin_r":(\d+)/) || one(/"client_revision":(\d+)/) || one(/"rev":(\d+)/),
     spinB: one(/"__spin_b":"([^"]+)"/) || 'trunk',
     spinT: one(/"__spin_t":(\d+)/),
@@ -96,9 +101,12 @@ async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCs
     const bp = await getBootstrap();
     if (!bp.lsd) return { error: 'could not find an LSD token on the page — reload instagram.com' };
     finalHeaders['x-fb-lsd'] = bp.lsd;
+    // jazoest is derived from fb_dtsg when logged in, else from lsd.
+    const jazoestSrc = bp.dtsg || bp.lsd;
     // Build/session params the real page sends; omit any we couldn't scrape.
     const dyn = [
       'av=0', '__d=www', '__user=0', '__a=1', '__req=1', 'dpr=1', '__ccg=EXCELLENT', '__comet_req=7',
+      bp.dtsg ? `fb_dtsg=${encodeURIComponent(bp.dtsg)}` : null,
       bp.rev ? `__rev=${bp.rev}` : null,
       bp.rev ? `__spin_r=${bp.rev}` : null,
       bp.spinB ? `__spin_b=${encodeURIComponent(bp.spinB)}` : null,
@@ -109,7 +117,7 @@ async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCs
       body = body
         .replace('__DYNPARAMS__', dyn)
         .replace('__LSD__', bp.lsd)
-        .replace('__JAZOEST__', deriveJazoest(bp.lsd));
+        .replace('__JAZOEST__', deriveJazoest(jazoestSrc));
     }
   }
 

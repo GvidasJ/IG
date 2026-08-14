@@ -45,6 +45,13 @@
         <h2>Settings</h2>
         <div id="settings-controls"><!-- built by options.js --></div>
       </section>
+      <section id="selftest">
+        <h2>Detector self-test</h2>
+        <p class="small dim">Queues 5 famous handles (must come back TAKEN) and
+        5 long random strings (must come back AVAILABLE), plus the usual canary.
+        Run this after any Instagram change, and verify the rows by hand.</p>
+        <button id="run-selftest">Queue self-test (10 checks)</button>
+      </section>
     </aside>
 
     <!-- Center: results table -->
@@ -69,6 +76,7 @@
       <table id="results-table">
         <thead>
           <tr>
+            <th><input type="checkbox" id="select-all" title="select all visible"></th>
             <th data-sort="handle">Handle</th>
             <th data-sort="state">State</th>
             <th data-sort="checkedAt">Checked</th>
@@ -78,6 +86,7 @@
         </thead>
         <tbody id="results-body"></tbody>
       </table>
+      <div id="results-empty" class="dim small">Nothing checked yet — generate or paste handles on the left.</div>
     </section>
 
     <!-- Right: favorites -->
@@ -90,6 +99,9 @@
   </main>
 
   <script src="storage.js"></script>
+  <script src="validation.js"></script>
+  <script src="wordlist.js"></script>
+  <script src="generator.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

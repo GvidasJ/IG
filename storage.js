@@ -41,6 +41,8 @@ const HHStorage = (() => {
       // Last successful canary: { at: epochMs } — cached briefly so a single
       // re-check doesn't cost two extra requests every time.
       lastCanaryOkAt: null,
+      // Same idea for the separate signup-registerability canary.
+      lastSignupCanaryOkAt: null,
       lastTickAt: null,
     },
     results: {},

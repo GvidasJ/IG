@@ -31,6 +31,33 @@ none exists — that tab is where the checks actually run; leave it open.
 `UNKNOWN` is never collapsed into the other two. A checker that says UNKNOWN
 honestly is useful; one that says TAKEN wrongly is worse than nothing.
 
+## Availability vs. registerability (the Signup column)
+
+`AVAILABLE` answers "does an account exist at this name?" — nothing more.
+Instagram **reserves or retires** huge numbers of names that have no profile:
+essentially all 1–3 character names, deleted/banned accounts, trademarks, and
+names it simply holds. Those read `AVAILABLE` here yet can never be registered.
+
+The **Signup** column closes that gap. Click **Verify** on a green row and the
+extension asks Instagram's real signup username-validator (the same call the
+signup form makes as you type):
+
+- 🟢 `REGISTERABLE` — the signup validator accepted the username.
+- ⚪ `BLOCKED` — reserved/taken/invalid at signup, even if no profile exists.
+
+This is deliberately **one manual click per name — never bulk**. That endpoint
+is the most abuse-monitored on the site, so the tool refuses to automate it at
+scale; you verify only your handful of finalists. The request is built to
+**never create an account** (empty email + unusable password), and it has its
+own canary (`@instagram` must come back `BLOCKED`, a random string
+`REGISTERABLE`) — if that fails, the verdict is not trusted and the banner
+shows the raw response. All of this lives isolated in `signup.js`.
+
+If the signup canary fails in your browser, capture the real request (DevTools
+→ Network, while typing a username into
+`instagram.com/accounts/emailsignup/`) and point `signup.js` at exactly what
+your browser sends — same pattern as fixing `detector.js`.
+
 ## Deliberate limits (not bugs)
 
 - **Hard cap of 500 candidates per run** and **1 request every 4 seconds plus
@@ -95,8 +122,9 @@ classification contract offline.
 | `manifest.json` | MV3 manifest; each permission justified in comments |
 | `background.js` | service worker: message router, watchdog alarm, lifecycle |
 | `queue.js` | queue engine: pacing, cap, canary gate, pause/backoff, persistence |
-| `detector.js` | **all** Instagram classification rules + canary definition |
-| `content.js` | dumb same-origin fetcher on instagram.com; no logic |
+| `detector.js` | **all** availability classification rules + canary definition |
+| `signup.js` | registerability check (signup validator) + its own canary |
+| `content.js` | dumb same-origin fetcher/poster on instagram.com; no logic |
 | `validation.js` | Instagram handle format rules; filters before queueing |
 | `generator.js` | seven local candidate generators |
 | `wordlist.js` | ~4,400 bundled common words (built from public-domain lists) |

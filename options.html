@@ -70,8 +70,11 @@
         </div>
       </div>
       <div class="small dim" id="available-note">
-        Note: Instagram also reserves or blocks some names that look free —
-        <b>AVAILABLE means “worth trying at signup,” not a guarantee.</b>
+        <b>State</b> = does an account exist (green AVAILABLE = no profile found).
+        <b>Signup</b> = does Instagram let you register it — click <b>Verify</b> on a
+        green row to ask the real signup validator. Many AVAILABLE names are still
+        <span style="color:var(--grey)">BLOCKED</span> at signup (reserved/retired) —
+        that gap is why 2–3 letter names are dead ends.
       </div>
       <table id="results-table">
         <thead>
@@ -79,6 +82,7 @@
             <th><input type="checkbox" id="select-all" title="select all visible"></th>
             <th data-sort="handle">Handle</th>
             <th data-sort="state">State</th>
+            <th data-sort="signup">Signup</th>
             <th data-sort="checkedAt">Checked</th>
             <th data-sort="reason">Reason</th>
             <th></th>

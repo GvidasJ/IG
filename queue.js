@@ -325,6 +325,75 @@ const HHQueue = (() => {
     return { ...HHDetector.classify(username, obs), obs };
   }
 
+  // ---- Signup verification (the "can I actually register it?" check) -----
+  // Strictly one manual call at a time. Never bulk. Its own canary. This is
+  // the only place the extension POSTs anything, and the POST is built to
+  // never create an account (empty email, unusable password).
+
+  async function rawSignup(username) {
+    const tab = await ensureInstagramTab();
+    if (!tab.ok) return { state: 'UNKNOWN', reason: tab.error, signal: 'AUTH', obs: null };
+    const req = HHSignup.buildRequest(username);
+    let obs;
+    try {
+      obs = await chrome.tabs.sendMessage(tab.tabId, {
+        type: 'HH_FETCH', url: req.url, method: req.method, headers: req.headers,
+        body: req.body, needsCsrf: req.needsCsrf,
+      });
+    } catch (err) {
+      obs = { error: `content script unreachable: ${String(err && err.message || err)}` };
+    }
+    return { ...HHSignup.classify(username, obs), obs };
+  }
+
+  async function verifySignup(handle) {
+    const h = HHValidation.normalize(handle);
+    const v = HHValidation.validate(h);
+    if (!v.ok) return { ok: false, error: `invalid handle: ${v.reason}` };
+
+    const run = await HHStorage.get('run');
+    if (run.state === 'running') {
+      return { ok: false, error: 'Pause the availability queue before verifying at signup (they share the rate limit).' };
+    }
+    const settings = await HHStorage.get('settings');
+
+    // Canary first, cached briefly, exactly like the availability detector.
+    if (!run.lastSignupCanaryOkAt || Date.now() - run.lastSignupCanaryOkAt > 10 * 60 * 1000) {
+      const blocked = await rawSignup(HHSignup.CANARY_BLOCKED);
+      if (blocked.signal) return { ok: false, error: `Signup check unavailable: ${blocked.reason}` };
+      await sleep(delayMs(settings));
+      const rnd = await rawSignup(HHSignup.makeCanaryRandom());
+      if (rnd.signal) return { ok: false, error: `Signup check unavailable: ${rnd.reason}` };
+
+      const verdict = HHSignup.evaluateCanary(blocked, rnd);
+      if (!verdict.ok) {
+        return {
+          ok: false,
+          canaryFailed: true,
+          error:
+            'SIGNUP CANARY FAILED — the signup validator behaves differently than expected, so no verdict is trusted. ' +
+            verdict.failures.join(' | ') +
+            `. Raw → ${describeObs('known-blocked', blocked)} ‖ ${describeObs('random', rnd)}`,
+        };
+      }
+      await HHStorage.update('run', { lastSignupCanaryOkAt: Date.now() });
+      await sleep(delayMs(settings));
+    }
+
+    const res = await rawSignup(h);
+    if (res.signal) return { ok: false, error: `Signup check paused: ${res.reason}` };
+
+    const signup = { state: res.state, reason: res.reason, checkedAt: Date.now() };
+    const results = await HHStorage.get('results');
+    results[h] = Object.assign(results[h] || {}, { signup });
+    await HHStorage.set('results', results);
+
+    const run2 = await HHStorage.get('run');
+    if (run2.items[h]) { run2.items[h] = Object.assign(run2.items[h], { signup }); await HHStorage.set('run', run2); }
+
+    return { ok: true, signup };
+  }
+
   // One-line raw-response summary for canary failure banners, so a broken
   // detector can be fixed from the banner alone instead of guessing.
   function describeObs(label, res) {
@@ -384,7 +453,7 @@ const HHQueue = (() => {
     }
   }
 
-  return { enqueue, start, pause, togglePause, clear, checkOne, watchdog, kickLoop };
+  return { enqueue, start, pause, togglePause, clear, checkOne, verifySignup, watchdog, kickLoop };
 })();
 
 if (typeof globalThis !== 'undefined') globalThis.HHQueue = HHQueue;

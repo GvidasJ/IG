@@ -5,7 +5,7 @@
 
 'use strict';
 
-importScripts('storage.js', 'detector.js', 'validation.js', 'queue.js');
+importScripts('storage.js', 'detector.js', 'signup.js', 'validation.js', 'queue.js');
 
 const WATCHDOG_ALARM = 'hh-watchdog';
 
@@ -43,6 +43,10 @@ async function handleMessage(msg /*, sender */) {
     case 'HH_RECHECK':
       // Single manual retry of an UNKNOWN row. Not a loop.
       return HHQueue.checkOne(msg.handle, { force: true });
+
+    case 'HH_VERIFY_SIGNUP':
+      // Single manual "can I actually register this?" check. Never bulk.
+      return HHQueue.verifySignup(msg.handle);
 
     case 'HH_SET_SETTINGS': {
       // Sanity clamps; the UI is responsible for warning before raising

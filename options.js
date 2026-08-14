@@ -217,6 +217,22 @@ function HHDetector_randomString() {
   return s;
 }
 
+async function verifyRow(handle, btn) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '…';
+  const resp = await chrome.runtime.sendMessage({ type: 'HH_VERIFY_SIGNUP', handle });
+  btn.disabled = false;
+  btn.textContent = original;
+  if (!resp.ok) {
+    // Canary failures and blockers are important — show them prominently.
+    $('banner').textContent = (resp.canaryFailed ? '🚨 ' : '⚠ ') + resp.error;
+    $('banner').className = 'banner ' + (resp.canaryFailed ? 'error' : 'warn');
+    return;
+  }
+  refresh();
+}
+
 // =======================================================================
 // Status bar + banner
 // =======================================================================
@@ -284,6 +300,7 @@ function visibleRows() {
   rows.sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
     if (sortKey === 'checkedAt') { x = x || 0; y = y || 0; }
+    else if (sortKey === 'signup') { x = (a.signup && a.signup.state) || ''; y = (b.signup && b.signup.state) || ''; }
     else { x = String(x || ''); y = String(y || ''); }
     return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
   });
@@ -325,6 +342,25 @@ function renderTable() {
     pill.textContent = r.state;
     tdState.appendChild(pill);
 
+    // Signup verdict + Verify button. Verifying only makes sense for names
+    // with no existing profile (AVAILABLE) or ambiguous ones (UNKNOWN).
+    const tdSignup = document.createElement('td');
+    if (r.signup && r.signup.state) {
+      const sp = document.createElement('span');
+      sp.className = 'pill ' + r.signup.state;
+      sp.textContent = r.signup.state;
+      sp.title = r.signup.reason || '';
+      tdSignup.appendChild(sp);
+    }
+    if (r.state === 'AVAILABLE' || r.state === 'UNKNOWN') {
+      const vb = document.createElement('button');
+      vb.className = 'rowbtn';
+      vb.textContent = r.signup ? 'Re-verify' : 'Verify';
+      vb.title = 'ask Instagram’s signup validator (1 request)';
+      vb.addEventListener('click', () => verifyRow(r.handle, vb));
+      tdSignup.appendChild(vb);
+    }
+
     const tdTime = document.createElement('td');
     tdTime.className = 'small dim';
     tdTime.textContent = fmtTime(r.checkedAt);
@@ -356,7 +392,7 @@ function renderTable() {
       tdActions.appendChild(re);
     }
 
-    tr.append(tdSel, tdHandle, tdState, tdTime, tdReason, tdActions);
+    tr.append(tdSel, tdHandle, tdState, tdSignup, tdTime, tdReason, tdActions);
     frag.appendChild(tr);
   }
   body.appendChild(frag);
@@ -373,8 +409,9 @@ function exportRows(ext) {
     mime = 'text/plain';
   } else {
     const esc = (s) => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
-    content = 'handle,state,checked_at,reason\n' + rows.map((r) =>
-      [esc(r.handle), esc(r.state), esc(r.checkedAt ? new Date(r.checkedAt).toISOString() : ''), esc(r.reason || '')].join(',')
+    content = 'handle,state,signup,checked_at,reason\n' + rows.map((r) =>
+      [esc(r.handle), esc(r.state), esc(r.signup && r.signup.state || ''),
+       esc(r.checkedAt ? new Date(r.checkedAt).toISOString() : ''), esc(r.reason || '')].join(',')
     ).join('\n') + '\n';
     mime = 'text/csv';
   }

@@ -82,6 +82,9 @@ input:focus, textarea:focus, select:focus, button:focus-visible {
 .pill.TAKEN     { background: var(--grey-dim);  color: var(--grey); }
 .pill.UNKNOWN   { background: var(--amber-dim); color: var(--amber); }
 .pill.PENDING   { background: var(--bg-inset);  color: var(--text-dim); }
+/* signup verdicts */
+.pill.REGISTERABLE { background: var(--green-dim); color: var(--green); }
+.pill.BLOCKED      { background: var(--grey-dim);  color: var(--grey); }
 
 /* Banners */
 .banner {

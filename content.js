@@ -15,25 +15,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
-  // HH_FETCH: { url, headers } -> raw observation for detector.classify().
-  doFetch(msg.url, msg.headers || {})
+  // HH_FETCH: { url, headers, method?, body?, needsCsrf? } -> raw observation.
+  doFetch(msg)
     .then(sendResponse)
     .catch((err) => sendResponse({ error: String(err && err.message || err) }));
   return true; // async response
 });
 
-async function doFetch(url, headers) {
+function readCookie(name) {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCsrf = false }) {
   // Same-origin guard: this script only ever talks to instagram.com.
   if (!/^https:\/\/www\.instagram\.com\//.test(url)) {
     return { error: `refusing non-Instagram URL: ${url}` };
   }
+
+  const finalHeaders = { ...headers };
+  if (needsCsrf) {
+    // csrftoken is a normal (non-httpOnly) cookie readable in page context;
+    // Instagram requires it echoed back as a header on POSTs. This is the
+    // user's own token from their own session — no credential handling.
+    const token = readCookie('csrftoken');
+    if (!token) {
+      return { error: 'no csrftoken cookie — are you logged in to instagram.com?' };
+    }
+    finalHeaders['x-csrftoken'] = token;
+  }
+
   let resp;
   try {
     resp = await fetch(url, {
-      method: 'GET',
+      method,
       credentials: 'same-origin', // the user's existing session cookie, nothing else
       redirect: 'follow',
-      headers,
+      headers: finalHeaders,
+      body: method === 'GET' ? undefined : body,
     });
   } catch (err) {
     return { error: `fetch failed: ${String(err && err.message || err)}` };

@@ -76,6 +76,9 @@ async function handleMessage(msg /*, sender */) {
       if (patch.maxConsecutiveUnknowns !== undefined) {
         s.maxConsecutiveUnknowns = Math.min(Math.max(Math.round(Number(patch.maxConsecutiveUnknowns) || 0), 0), 500);
       }
+      if (patch.treatUnknownAsBlocked !== undefined) {
+        s.treatUnknownAsBlocked = !!patch.treatUnknownAsBlocked;
+      }
       await HHStorage.set('settings', s);
       return { ok: true, settings: s };
     }

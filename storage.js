@@ -26,6 +26,9 @@ const HHStorage = (() => {
       // Pause the run after this many consecutive UNKNOWN results (soft-block
       // / stale-detector guard). 0 disables it and the run pushes through.
       maxConsecutiveUnknowns: 5,
+      // Display-only: show UNKNOWN rows as BLOCKED ("can't get it"). The stored
+      // result stays UNKNOWN and re-checkable; this only changes the label.
+      treatUnknownAsBlocked: false,
     },
     run: {
       // idle | running | paused_user | paused_rate_limited | paused_logged_out

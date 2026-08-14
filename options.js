@@ -383,10 +383,19 @@ function renderTable() {
     tdHandle.className = 'handle-cell';
     tdHandle.textContent = r.handle;
 
+    // Optional display-only collapse: show UNKNOWN as BLOCKED per user setting.
+    // The stored result stays UNKNOWN (re-checkable); only the label changes.
+    const assumeBlocked = lastState && lastState.settings.treatUnknownAsBlocked && r.state === 'UNKNOWN';
     const tdState = document.createElement('td');
     const pill = document.createElement('span');
-    pill.className = 'pill ' + r.state;
-    pill.textContent = r.state;
+    if (assumeBlocked) {
+      pill.className = 'pill BLOCKED';
+      pill.textContent = 'BLOCKED';
+      pill.title = 'Assumed blocked (result was UNKNOWN — the check couldn’t confirm). Turn off "treat UNKNOWN as blocked" in Settings to see the real state.';
+    } else {
+      pill.className = 'pill ' + r.state;
+      pill.textContent = r.state;
+    }
     tdState.appendChild(pill);
 
     // Signup verdict + Verify button. Verifying only makes sense for names
@@ -516,6 +525,12 @@ function buildSettingsPanel() {
     <input type="number" id="set-cap" min="1" max="2000">
     <label>Pause after N consecutive unknowns (0 = never, default 5)</label>
     <input type="number" id="set-unknowns" min="0" max="500">
+    <label style="display:flex;gap:6px;align-items:flex-start;margin-top:8px">
+      <input type="checkbox" id="set-unknown-blocked" style="width:auto;margin-top:2px">
+      <span>Show UNKNOWN as BLOCKED ("can't get it"). Display only — the real
+      result stays UNKNOWN and re-checkable. Handy for short/reserved sweeps;
+      for longer names an UNKNOWN can be a good name Instagram just rate-limited.</span>
+    </label>
     <div class="row"><button id="set-save">Save settings</button></div>
     <div id="set-feedback" class="small dim"></div>
   `;
@@ -538,7 +553,11 @@ async function saveSettings() {
   }
   const unknowns = Number($('set-unknowns').value);
   const resp = await chrome.runtime.sendMessage({
-    type: 'HH_SET_SETTINGS', settings: { rateSeconds: rate, maxQueue: cap, maxConsecutiveUnknowns: unknowns },
+    type: 'HH_SET_SETTINGS',
+    settings: {
+      rateSeconds: rate, maxQueue: cap, maxConsecutiveUnknowns: unknowns,
+      treatUnknownAsBlocked: $('set-unknown-blocked').checked,
+    },
   });
   $('set-feedback').textContent = resp.ok ? 'Saved.' : resp.error;
   refresh();
@@ -549,6 +568,7 @@ function renderSettings(settings) {
   $('set-rate').value = settings.rateSeconds;
   $('set-cap').value = settings.maxQueue;
   $('set-unknowns').value = settings.maxConsecutiveUnknowns;
+  $('set-unknown-blocked').checked = !!settings.treatUnknownAsBlocked;
 }
 
 // =======================================================================

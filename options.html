@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Handle Hunter — Dashboard</title>
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <!-- Top: queue status bar -->
+  <header id="status-bar">
+    <div id="status-left">
+      <span id="run-state" class="pill PENDING">idle</span>
+      <span id="run-progress" class="dim">no queue</span>
+      <span id="run-rate" class="dim small"></span>
+      <span id="run-eta" class="dim small"></span>
+    </div>
+    <div id="status-right">
+      <button id="pause-resume" class="primary" disabled>Pause</button>
+      <button id="clear-queue" class="danger">Clear queue</button>
+    </div>
+    <div id="progress-track"><div id="progress-fill"></div></div>
+  </header>
+
+  <main>
+    <!-- Left: generator + paste list -->
+    <aside id="left-panel">
+      <section id="generator">
+        <h2>Generate</h2>
+        <div id="generator-controls"><!-- built by options.js --></div>
+      </section>
+      <section id="paste">
+        <h2>Your own list</h2>
+        <textarea id="paste-input" class="handle" rows="6"
+          placeholder="one handle per line&#10;invalid ones are filtered out before queueing"></textarea>
+        <div class="row">
+          <button id="paste-add" class="primary">Add to queue</button>
+          <span id="paste-feedback" class="small dim"></span>
+        </div>
+      </section>
+      <section id="settings">
+        <h2>Settings</h2>
+        <div id="settings-controls"><!-- built by options.js --></div>
+      </section>
+    </aside>
+
+    <!-- Center: results table -->
+    <section id="center-panel">
+      <div id="results-toolbar">
+        <div id="filter-pills">
+          <button data-filter="ALL" class="filter-on">All</button>
+          <button data-filter="AVAILABLE">Available</button>
+          <button data-filter="TAKEN">Taken</button>
+          <button data-filter="UNKNOWN">Unknown</button>
+          <button data-filter="PENDING">Pending</button>
+        </div>
+        <div>
+          <button id="export-txt">Export .txt</button>
+          <button id="export-csv">Export .csv</button>
+        </div>
+      </div>
+      <div class="small dim" id="available-note">
+        Note: Instagram also reserves or blocks some names that look free —
+        <b>AVAILABLE means “worth trying at signup,” not a guarantee.</b>
+      </div>
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th data-sort="handle">Handle</th>
+            <th data-sort="state">State</th>
+            <th data-sort="checkedAt">Checked</th>
+            <th data-sort="reason">Reason</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </section>
+
+    <!-- Right: favorites -->
+    <aside id="right-panel">
+      <section id="favorites">
+        <h2>Favorites</h2>
+        <ul id="favorites-list"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <script src="storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

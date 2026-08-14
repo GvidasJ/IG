@@ -1,0 +1,48 @@
+{
+  // Handle Hunter — personal-scale Instagram handle generator + availability checker.
+  // Chrome allows JS-style comments in manifest.json; they are stripped at load time.
+  "manifest_version": 3,
+  "name": "Handle Hunter",
+  "version": "0.1.0",
+  "description": "Find a short, unusual, still-available Instagram handle. Personal-scale, rate-limited, runs in your own logged-in session. No credentials, no evasion, nothing leaves your machine.",
+
+  "permissions": [
+    // "storage": all state (queue, results, settings, favorites) lives in
+    // chrome.storage.local so it survives popup closes and browser restarts.
+    // Nothing is synced or sent anywhere.
+    "storage",
+    // "alarms": a 1-minute watchdog alarm so the MV3 service worker can
+    // resurrect an in-progress run if Chrome kills the worker mid-run.
+    // Not used to schedule requests (the request timer is in-worker).
+    "alarms"
+  ],
+
+  // Scoped to Instagram only. Needed so the extension can (a) find/open the
+  // instagram.com tab that the content script checks from, and (b) message it.
+  // No other hosts, no <all_urls>.
+  "host_permissions": [
+    "https://www.instagram.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  // The content script does the actual availability fetches from page context,
+  // so requests are same-origin, carry the user's real session, and look like
+  // what they are: the user checking a handful of names.
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Handle Hunter"
+  },
+
+  "options_page": "options.html"
+}

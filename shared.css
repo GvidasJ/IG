@@ -1,0 +1,99 @@
+/* shared.css — dark theme tokens + base styles for popup and dashboard. */
+
+:root {
+  --bg: #101216;
+  --bg-raised: #171a20;
+  --bg-inset: #0b0d10;
+  --border: #2a2f38;
+  --text: #d7dae0;
+  --text-dim: #8a919e;
+  --accent: #7aa2f7;
+
+  --green: #4ade80;
+  --green-dim: #14351f;
+  --grey: #6b7280;
+  --grey-dim: #1a1d22;
+  --amber: #fbbf24;
+  --amber-dim: #3a2e10;
+  --red: #f87171;
+  --red-dim: #3a1414;
+
+  --mono: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.handle { font-family: var(--mono); }
+
+h1, h2, h3 { font-weight: 600; margin: 0 0 8px; }
+h1 { font-size: 15px; }
+h2 { font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+
+button {
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
+button.danger { border-color: var(--red); color: var(--red); }
+
+input[type="text"], input[type="number"], textarea, select {
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+}
+input[type="text"].handle, textarea.handle { font-family: var(--mono); }
+textarea { resize: vertical; }
+
+input:focus, textarea:focus, select:focus, button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* State pills */
+.pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.pill.AVAILABLE { background: var(--green-dim); color: var(--green); }
+.pill.TAKEN     { background: var(--grey-dim);  color: var(--grey); }
+.pill.UNKNOWN   { background: var(--amber-dim); color: var(--amber); }
+.pill.PENDING   { background: var(--bg-inset);  color: var(--text-dim); }
+
+/* Banners */
+.banner {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.banner.warn  { border-color: var(--amber); background: var(--amber-dim); color: var(--amber); }
+.banner.error { border-color: var(--red);   background: var(--red-dim);   color: var(--red); font-weight: 600; }
+.banner.info  { border-color: var(--accent); color: var(--text); }
+.banner.hidden { display: none; }
+
+.dim { color: var(--text-dim); }
+.small { font-size: 11px; }

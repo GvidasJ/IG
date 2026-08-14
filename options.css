@@ -1,0 +1,101 @@
+/* options.css — dashboard layout. Dense but not cramped; theme in shared.css. */
+
+body { padding: 14px 18px; }
+
+#status-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px 12px;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  align-items: center;
+}
+#status-left { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+#status-right { display: flex; gap: 8px; }
+#progress-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  background: var(--bg-inset);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#progress-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+
+main {
+  display: grid;
+  grid-template-columns: 290px 1fr 220px;
+  gap: 16px;
+  align-items: start;
+}
+
+aside section, #center-panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+#paste-input { width: 100%; }
+#left-panel .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+
+/* generator controls (populated by JS) */
+#generator-controls label { display: block; margin: 8px 0 2px; color: var(--text-dim); font-size: 12px; }
+#generator-controls input, #generator-controls select { width: 100%; }
+#generator-controls .row { display: flex; gap: 8px; }
+#generator-controls .row > * { flex: 1; }
+
+#settings-controls label { display: block; margin: 8px 0 2px; color: var(--text-dim); font-size: 12px; }
+#settings-controls input { width: 100%; }
+
+/* results */
+#results-toolbar {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#filter-pills button { margin-right: 4px; padding: 3px 10px; font-size: 12px; }
+#filter-pills button.filter-on { background: var(--accent); color: #0b0d10; border-color: var(--accent); }
+#available-note { margin-bottom: 8px; }
+
+#results-table { width: 100%; border-collapse: collapse; }
+#results-table th, #results-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+#results-table th {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+#results-table td.handle-cell { font-family: var(--mono); }
+#results-table tr.state-TAKEN td { opacity: 0.55; }
+#results-table td .rowbtn { padding: 1px 7px; font-size: 11px; margin-left: 4px; }
+
+#favorites-list { list-style: none; margin: 0; padding: 0; }
+#favorites-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+}
+#favorites-list li:last-child { border-bottom: 0; }
+
+@media (max-width: 1100px) {
+  main { grid-template-columns: 1fr; }
+}

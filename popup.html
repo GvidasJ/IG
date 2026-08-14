@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Handle Hunter</h1>
+    <button id="open-dashboard">Dashboard ↗</button>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <section id="queue-status">
+    <div class="row">
+      <span id="run-state" class="pill PENDING">idle</span>
+      <span id="run-progress" class="dim"></span>
+    </div>
+    <div class="row">
+      <button id="pause-resume" disabled>Pause</button>
+    </div>
+  </section>
+
+  <section id="quick-check">
+    <h2>Quick check</h2>
+    <div class="row">
+      <input type="text" id="quick-input" class="handle" placeholder="handle" spellcheck="false">
+      <button id="quick-go" class="primary">Check</button>
+    </div>
+    <div id="quick-result" class="small"></div>
+  </section>
+
+  <footer class="small dim">
+    Personal-scale tool. Conservative rate limits by design.
+  </footer>
+
+  <script src="storage.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

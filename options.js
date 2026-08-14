@@ -341,7 +341,9 @@ function allRows() {
 
 function visibleRows() {
   let rows = allRows();
-  if (filter !== 'ALL') rows = rows.filter((r) => r.state === filter);
+  // WINNERS = the names you can actually claim: signup-confirmed REGISTERABLE.
+  if (filter === 'WINNERS') rows = rows.filter((r) => r.signup && r.signup.state === 'REGISTERABLE');
+  else if (filter !== 'ALL') rows = rows.filter((r) => r.state === filter);
   rows.sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
     if (sortKey === 'checkedAt') { x = x || 0; y = y || 0; }

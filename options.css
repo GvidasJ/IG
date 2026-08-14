@@ -64,6 +64,8 @@ aside section, #center-panel {
 }
 #filter-pills button { margin-right: 4px; padding: 3px 10px; font-size: 12px; }
 #filter-pills button.filter-on { background: var(--accent); color: #0b0d10; border-color: var(--accent); }
+#filter-pills button[data-filter="WINNERS"] { color: var(--green); border-color: var(--green); }
+#filter-pills button[data-filter="WINNERS"].filter-on { background: var(--green); color: #0b0d10; }
 #available-note { margin-bottom: 8px; }
 
 #results-table { width: 100%; border-collapse: collapse; }

@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Handle Hunter — detector offline tests</title>
+  <style>
+    body { background: #101216; color: #d7dae0; font: 13px/1.5 system-ui; padding: 20px; max-width: 900px; }
+    h1 { font-size: 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { border-bottom: 1px solid #2a2f38; padding: 4px 8px; text-align: left; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; font-weight: 700; }
+    #summary { font-size: 15px; font-weight: 700; margin: 12px 0; }
+    code { font-family: Consolas, monospace; color: #7aa2f7; }
+  </style>
+</head>
+<body>
+  <h1>detector.js offline fixture tests</h1>
+  <p>These verify the classification <em>contract</em> (open this file directly in a
+  browser, no extension needed). They do <b>not</b> prove Instagram still behaves this
+  way — only the live canary and the dashboard's detector self-test prove that.</p>
+  <div id="summary"></div>
+  <table><thead><tr><th>Fixture</th><th>Expected</th><th>Got</th><th>Result</th></tr></thead>
+  <tbody id="rows"></tbody></table>
+
+  <script src="../detector.js"></script>
+  <script src="detector-fixtures.js"></script>
+  <script>
+    'use strict';
+    const rows = document.getElementById('rows');
+    let pass = 0, fail = 0;
+
+    function addRow(name, expected, got, ok) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${name}</td><td><code>${expected}</code></td><td><code>${got}</code></td>` +
+        `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+      rows.appendChild(tr);
+      ok ? pass++ : fail++;
+    }
+
+    for (const f of HH_FIXTURES) {
+      const r = HHDetector.classify(f.candidate, f.obs);
+      const ok = r.state === f.expect.state && (r.signal || null) === (f.expect.signal || null);
+      addRow(f.name, `${f.expect.state} / ${f.expect.signal || '-'}`, `${r.state} / ${r.signal || '-'} (${r.reason})`, ok);
+    }
+    for (const f of HH_CANARY_FIXTURES) {
+      const r = HHDetector.evaluateCanary(f.taken, f.random);
+      addRow(f.name, `ok=${f.expectOk}`, `ok=${r.ok}${r.failures.length ? ' — ' + r.failures.join('; ') : ''}`, r.ok === f.expectOk);
+    }
+
+    document.getElementById('summary').textContent = `${pass} passed, ${fail} failed`;
+    document.getElementById('summary').className = fail ? 'fail' : 'pass';
+  </script>
+</body>
+</html>

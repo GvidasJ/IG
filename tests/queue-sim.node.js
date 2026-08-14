@@ -36,12 +36,15 @@ global.chrome = {
     async sendMessage(tabId, msg) {
       if (msg.type === 'HH_PING') return { ok: true, alive: true };
       if (msg.type === 'HH_FETCH') {
-        // Signup POST to the account-attempt endpoint.
-        if (msg.method === 'POST' && /web_create_ajax/.test(msg.url)) {
-          const u = decodeURIComponent((msg.body.match(/username=([^&]*)/) || [])[1] || '');
+        // Signup validation POST to the GraphQL endpoint.
+        if (msg.method === 'POST' && /\/api\/graphql/.test(msg.url)) {
+          // username lives inside the url-encoded `variables` JSON
+          const vm = msg.body.match(/variables=([^&]*)/);
+          const vars = vm ? JSON.parse(decodeURIComponent(vm[1])) : {};
+          const u = vars.input && vars.input.username && vars.input.username.sensitive_string_value || '';
           if (signupResponses[u]) return signupResponses[u];
-          // default (random canary): registerable — only other-field errors
-          return { status: 400, contentType: 'application/json', json: { account_created: false, errors: { email: ['Enter a valid email.'] }, status: 'fail' } };
+          // default (random canary): registerable — SUCCESS, no error
+          return { status: 200, contentType: 'application/json', json: { data: { xfb_caa_registration_field_validation: { status: 'SUCCESS', error: { code: null, field: 'USERNAME', message: null }, username_suggestions: [] } } } };
         }
         const m = msg.url.match(/username=([^&]+)/);
         const u = decodeURIComponent(m[1]);
@@ -162,8 +165,8 @@ async function waitFor(pred, timeoutMs, label) {
     freeb: { state: 'AVAILABLE', reason: '', checkedAt: Date.now() },
     takenx: { state: 'TAKEN', reason: '', checkedAt: Date.now() },
   });
-  const BLOCK = () => ({ status: 400, contentType: 'application/json', json: { account_created: false, errors: { username: ["This username isn't available."], email: ['x'] }, status: 'fail' } });
-  const REG = () => ({ status: 400, contentType: 'application/json', json: { account_created: false, errors: { email: ['x'] }, status: 'fail' } });
+  const BLOCK = () => ({ status: 200, contentType: 'application/json', json: { data: { xfb_caa_registration_field_validation: { status: 'SUCCESS', error: { code: 'taken', field: 'USERNAME', message: "This username isn't available." }, username_suggestions: ['x1', 'x2'] } } } });
+  const REG = () => ({ status: 200, contentType: 'application/json', json: { data: { xfb_caa_registration_field_validation: { status: 'SUCCESS', error: { code: null, field: 'USERNAME', message: null }, username_suggestions: [] } } } });
   signupResponses[HHSignup.CANARY_BLOCKED] = BLOCK();
   signupResponses['freea'] = REG();
   signupResponses['freeb'] = BLOCK(); // reserved despite no profile — the whole point

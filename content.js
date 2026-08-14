@@ -27,7 +27,38 @@ function readCookie(name) {
   return m ? decodeURIComponent(m[1]) : '';
 }
 
-async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCsrf = false }) {
+// Scrape the page's LSD token (a per-session anti-CSRF token Instagram embeds
+// in its bootstrap JSON). Present on any instagram.com page. We read it from
+// the current document; if not found, fetch a fresh page and read it there.
+function extractLsd(html) {
+  const pats = [
+    /\["LSD",\[\],\{"token":"([^"]+)"\}/,
+    /"lsd":\s*"([^"]+)"/,
+    /name=\\?"lsd\\?"\s+value=\\?"([^"\\]+)/,
+  ];
+  for (const p of pats) { const m = html.match(p); if (m && m[1]) return m[1]; }
+  return '';
+}
+
+// jazoest = "2" + sum of char codes of the lsd token (kept in sync with
+// HHSignup.jazoest; content.js can't importScripts, so it's inlined).
+function deriveJazoest(token) {
+  let sum = 0;
+  for (let i = 0; i < token.length; i++) sum += token.charCodeAt(i);
+  return '2' + sum;
+}
+
+async function getLsd() {
+  let lsd = extractLsd(document.documentElement.innerHTML);
+  if (lsd) return lsd;
+  try {
+    const r = await fetch('/accounts/emailsignup/', { credentials: 'same-origin' });
+    lsd = extractLsd(await r.text());
+  } catch { /* ignore */ }
+  return lsd;
+}
+
+async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCsrf = false, needsLsd = false }) {
   // Same-origin guard: this script only ever talks to instagram.com.
   if (!/^https:\/\/www\.instagram\.com\//.test(url)) {
     return { error: `refusing non-Instagram URL: ${url}` };
@@ -43,6 +74,14 @@ async function doFetch({ url, headers = {}, method = 'GET', body = null, needsCs
       return { error: 'no csrftoken cookie — are you logged in to instagram.com?' };
     }
     finalHeaders['x-csrftoken'] = token;
+  }
+  if (needsLsd) {
+    const lsd = await getLsd();
+    if (!lsd) return { error: 'could not find an LSD token on the page — reload instagram.com' };
+    finalHeaders['x-fb-lsd'] = lsd;
+    if (typeof body === 'string') {
+      body = body.replace('__LSD__', lsd).replace('__JAZOEST__', deriveJazoest(lsd));
+    }
   }
 
   let resp;

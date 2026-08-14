@@ -59,10 +59,16 @@ own canary (`@instagram` must come back `BLOCKED`, a random string
 `REGISTERABLE`) — if that fails, no verdict is trusted and the banner shows the
 raw response. All of this lives isolated in `signup.js`.
 
-If the signup canary fails in your browser, capture the real request (DevTools
-→ Network, while typing a username into
-`instagram.com/accounts/emailsignup/`) and point `signup.js` at exactly what
-your browser sends — same pattern as fixing `detector.js`.
+Under the hood this calls Instagram's real signup field-validation GraphQL
+query (`useCAARegistrationFieldValidationQuery` on `/api/graphql`), captured
+from a live session. The per-session `lsd` token and its derived `jazoest` are
+scraped/computed fresh at runtime, so those never go stale — but the query's
+`doc_id` changes when Instagram redeploys (every few weeks). When it does, the
+signup canary fails loud with the raw response instead of lying; update
+`DOC_ID` in `signup.js` (re-capture via DevTools → Network while typing a
+username into `instagram.com/accounts/emailsignup/`, find the `graphql` request
+named `useCAARegistrationFieldValidationQuery`, read its Payload). The
+availability checker is unaffected by any of this.
 
 ## Deliberate limits (not bugs)
 

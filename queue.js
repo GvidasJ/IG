@@ -338,7 +338,7 @@ const HHQueue = (() => {
     try {
       obs = await chrome.tabs.sendMessage(tab.tabId, {
         type: 'HH_FETCH', url: req.url, method: req.method, headers: req.headers,
-        body: req.body, needsCsrf: req.needsCsrf,
+        body: req.body, needsCsrf: req.needsCsrf, needsLsd: req.needsLsd,
       });
     } catch (err) {
       obs = { error: `content script unreachable: ${String(err && err.message || err)}` };

@@ -116,13 +116,18 @@ const HHDetector = (() => {
       return U('UNKNOWN', 'API returned a malformed user object');
     }
 
-    // Alternate free shape: explicit 404 "User not found". This is a positive
-    // statement from the API, not a mere absence.
-    if (status === 404 && json && /user not found/i.test(msg)) {
-      return U('AVAILABLE', 'API positively reports "User not found"');
+    // Alternate free shape: the profile API 404s for nonexistent users. The
+    // exact JSON wording has changed over time ("User not found", "Not
+    // Found", ...), so any parseable JSON API error with 404 counts as a
+    // positive miss. This stays canary-guarded: if Instagram ever starts
+    // 404ing EVERYTHING (block wall), the known-taken canary also reads
+    // AVAILABLE and the run aborts. (Rule loosened 2026-08-15 after a live
+    // canary failure: logged-in 404 body no longer matched "User not found".)
+    if (status === 404 && json) {
+      return U('AVAILABLE', `API 404 for this username${msg ? ` ("${msg}")` : ''}`);
     }
     if (status === 404) {
-      return U('UNKNOWN', 'HTTP 404 without a "User not found" body — not trusting it');
+      return U('UNKNOWN', `HTTP 404 with non-JSON body (${obs.contentType || 'unknown type'}) — not trusting it`);
     }
 
     // ---- Everything else is UNKNOWN -------------------------------------

@@ -262,7 +262,8 @@ const HHQueue = (() => {
         stateReason:
           'CANARY FAILED — the detector cannot be trusted and this run was aborted. ' +
           verdict.failures.join(' | ') +
-          ' — Instagram has probably changed its responses; detector.js needs updating. No results were produced.',
+          ' — Instagram has probably changed its responses; detector.js needs updating. No results were produced. ' +
+          `Raw responses → ${describeObs('known-taken', takenRes)} ‖ ${describeObs('random', randomRes)}`,
       });
       return false;
     }
@@ -320,7 +321,18 @@ const HHQueue = (() => {
     } catch (err) {
       obs = { error: `content script unreachable: ${String(err && err.message || err)}` };
     }
-    return HHDetector.classify(username, obs);
+    // obs rides along so canary failures can show the raw response.
+    return { ...HHDetector.classify(username, obs), obs };
+  }
+
+  // One-line raw-response summary for canary failure banners, so a broken
+  // detector can be fixed from the banner alone instead of guessing.
+  function describeObs(label, res) {
+    const o = res && res.obs;
+    if (!o) return `${label}: no observation`;
+    if (o.error) return `${label}: ${o.error}`;
+    const body = String(o.bodyText || '').replace(/\s+/g, ' ').slice(0, 160);
+    return `${label}: HTTP ${o.status} [${o.contentType || 'no content-type'}] body: ${body || '(empty)'}`;
   }
 
   // Find (or open) an instagram.com tab with a live content script. The tab

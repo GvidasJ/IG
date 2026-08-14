@@ -31,6 +31,12 @@ const HH_FIXTURES = [
     expect: { state: 'AVAILABLE', signal: null },
   },
   {
+    name: 'available: 404 with any JSON API error (wording drifts, canary-guarded)',
+    candidate: 'hhzq8xk2v9',
+    obs: { status: 404, contentType: 'application/json', json: { message: 'Not Found', status: 'fail' } },
+    expect: { state: 'AVAILABLE', signal: null },
+  },
+  {
     name: 'NOT available: bare 404 without user-not-found body',
     candidate: 'hhzq8xk2v9',
     obs: { status: 404, contentType: 'text/html', bodyText: '<html>...' },

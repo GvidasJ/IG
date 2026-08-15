@@ -246,6 +246,33 @@ def load_candidates(path):
             (valid if ok else rejected).append(h if ok else (h, reason))
     return valid, rejected
 
+# On a rate-limit, wait this long and keep going (no evasion — just patience).
+# Exponential: 15 min, 30, 60, capped at 2 hours. Resets after a success.
+BACKOFF_START = 15 * 60
+BACKOFF_CAP = 2 * 60 * 60
+
+def load_done(path):
+    """Handles already recorded in results.csv, so re-runs resume, not restart."""
+    done = set()
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8") as f:
+            r = csv.reader(f)
+            next(r, None)  # header
+            for row in r:
+                if row:
+                    done.add(row[0])
+    return done
+
+def wait_backoff(backoff, why):
+    mins = backoff / 60
+    print(f"\n{C.AMBER}{C.BOLD}Rate-limited ({why}).{C.END} Waiting "
+          f"{mins:.0f} min, then continuing on its own. (Ctrl+C to stop; progress is saved.)")
+    try:
+        time.sleep(backoff)
+    except KeyboardInterrupt:
+        raise
+    return min(backoff * 2, BACKOFF_CAP)
+
 def main():
     if not SESSIONID or not CSRFTOKEN:
         print(f"{C.RED}Missing cookies.{C.END} Set IG_SESSIONID and IG_CSRFTOKEN "
@@ -259,54 +286,97 @@ def main():
         print("Nothing valid to check.")
         sys.exit(0)
 
-    print(f"Checking {C.BOLD}{len(valid)}{C.END} handle(s) at ~1 request / {RATE_SECONDS:g}s "
-          f"(+jitter). Press Ctrl+C to stop.\n")
+    # Resume: skip anything already in results.csv.
+    done = load_done(OUTPUT_CSV)
+    todo = [h for h in valid if h not in done]
+    if done:
+        print(f"{C.DIM}Resuming — {len(done)} already checked, {len(todo)} left.{C.END}")
+    if not todo:
+        print(f"{C.GREEN}Everything in the list is already checked ({OUTPUT_CSV}).{C.END}")
+        _summary(OUTPUT_CSV)
+        return
 
-    try:
-        if not run_canary():
-            sys.exit(2)
-    except (RateLimited, LoggedOut) as e:
-        print(f"{C.RED}Canary could not run: {e}{C.END}")
-        sys.exit(2)
+    print(f"Checking {C.BOLD}{len(todo)}{C.END} handle(s) at ~1 request / {RATE_SECONDS:g}s "
+          f"(+jitter). Rate-limits auto-wait and continue. Press Ctrl+C to stop.\n")
 
-    rows = []
+    # Canary first — retry through rate-limits until it can actually run.
+    backoff = BACKOFF_START
+    while True:
+        try:
+            if not run_canary():
+                sys.exit(2)  # canary classified WRONG -> abort (don't produce a bad list)
+            break
+        except RateLimited as e:
+            try:
+                backoff = wait_backoff(backoff, str(e))
+            except KeyboardInterrupt:
+                print(f"\n{C.DIM}Stopped by you.{C.END}"); return
+        except LoggedOut as e:
+            print(f"\n{C.RED}{C.BOLD}STOPPED — logged out ({e}).{C.END} Refresh your "
+                  f"sessionid cookie and run again."); return
+
+    # Open results.csv in append mode; write header only if new/empty.
+    new_file = not os.path.exists(OUTPUT_CSV) or os.path.getsize(OUTPUT_CSV) == 0
+    csvfile = open(OUTPUT_CSV, "a", newline="", encoding="utf-8")
+    writer = csv.writer(csvfile)
+    if new_file:
+        writer.writerow(["handle", "state", "reason"])
+        csvfile.flush()
+
+    checked = 0
+    avail_count = 0
+    backoff = BACKOFF_START
+    i = 0
     try:
-        for i, h in enumerate(valid, 1):
+        while i < len(todo):
+            h = todo[i]
             status, data, raw = fetch(h)
             try:
                 state, reason = classify(h, status, data, raw)
             except RateLimited as e:
-                print(f"\n{C.AMBER}{C.BOLD}PAUSED — Instagram is rate-limiting ({e}).{C.END}\n"
-                      f"Wait 20-30 minutes, then run again. Do NOT switch on a VPN/proxy to "
-                      f"push through — that risks your account. Already-checked results are saved.")
-                break
+                backoff = wait_backoff(backoff, str(e))
+                continue  # retry the SAME handle after the wait
             except LoggedOut as e:
-                print(f"\n{C.RED}{C.BOLD}STOPPED — you appear to be logged out ({e}).{C.END}\n"
-                      f"Refresh your sessionid cookie and run again.")
-                break
+                print(f"\n{C.RED}{C.BOLD}STOPPED — logged out ({e}).{C.END} Refresh your "
+                      f"sessionid cookie and run again."); break
 
-            rows.append((h, state, reason))
-            print(f"[{i:>4}/{len(valid)}] {h:<30} {color_state(state)}"
+            backoff = BACKOFF_START  # success resets the wait
+            writer.writerow([h, state, reason]); csvfile.flush()  # persist immediately
+            checked += 1
+            if state == "AVAILABLE":
+                avail_count += 1
+            print(f"[{i + 1:>6}/{len(todo)}] {h:<30} {color_state(state)}"
+                  + (f"  {C.GREEN}<-- available!{C.END}" if state == "AVAILABLE" else "")
                   + (f"  {C.DIM}{reason}{C.END}" if state == "UNKNOWN" else ""))
-            if i < len(valid):
+            i += 1
+            if i < len(todo):
                 time.sleep(delay())
     except KeyboardInterrupt:
-        print(f"\n{C.DIM}Stopped by you.{C.END}")
+        print(f"\n{C.DIM}Stopped by you — progress saved to {OUTPUT_CSV}.{C.END}")
+    finally:
+        csvfile.close()
 
-    # Save whatever we have.
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["handle", "state", "reason"])
-        w.writerows(rows)
+    print(f"\n{C.BOLD}Session done.{C.END} {checked} checked this run, "
+          f"{C.GREEN}{avail_count} AVAILABLE{C.END}. All results in {OUTPUT_CSV}.")
+    _summary(OUTPUT_CSV)
 
-    avail = [h for h, s, _ in rows if s == "AVAILABLE"]
-    print(f"\n{C.BOLD}Done.{C.END} {len(rows)} checked, "
-          f"{C.GREEN}{len(avail)} AVAILABLE{C.END}. Saved to {OUTPUT_CSV}.")
+def _summary(path):
+    """Print the AVAILABLE names from the whole results.csv."""
+    if not os.path.exists(path):
+        return
+    avail = []
+    with open(path, newline="", encoding="utf-8") as f:
+        r = csv.reader(f); next(r, None)
+        for row in r:
+            if len(row) >= 2 and row[1] == "AVAILABLE":
+                avail.append(row[0])
     if avail:
-        print(f"\n{C.GREEN}{C.BOLD}Worth trying at signup{C.END} (verify in the app — Instagram "
-              f"reserves some names that look free):")
-        for h in avail:
+        print(f"\n{C.GREEN}{C.BOLD}{len(avail)} AVAILABLE so far{C.END} (worth trying at signup — "
+              f"Instagram reserves some names that look free):")
+        for h in avail[:200]:
             print(f"  {C.GREEN}@{h}{C.END}")
+        if len(avail) > 200:
+            print(f"  {C.DIM}...and {len(avail) - 200} more in {path}{C.END}")
 
 
 if __name__ == "__main__":

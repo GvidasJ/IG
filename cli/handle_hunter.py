@@ -68,6 +68,10 @@ CSRFTOKEN = os.environ.get("IG_CSRFTOKEN", "")
 
 RATE_SECONDS = 4.0        # seconds between requests (>= 1). Slower = safer.
 JITTER_FRAC = 0.5         # extra random delay, as a fraction of RATE_SECONDS.
+# Simple two-state view: show every result as AVAILABLE (free to take) or
+# UNAVAILABLE (taken, or couldn't be confirmed free). The CSV still records the
+# real three states (AVAILABLE / TAKEN / UNKNOWN) so nothing is lost.
+BINARY_VIEW = True
 # Input file: pass a path as the first argument, else it looks for
 # usernames.txt in the current folder AND next to this script (cli/).
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +91,14 @@ class C:
 
 def color_state(state):
     return {"AVAILABLE": C.GREEN, "TAKEN": C.GREY, "UNKNOWN": C.AMBER}.get(state, "") + state + C.END
+
+def display_state(state):
+    """What the terminal shows. In BINARY_VIEW, collapse to available/unavailable."""
+    if not BINARY_VIEW:
+        return color_state(state)
+    if state == "AVAILABLE":
+        return C.GREEN + "AVAILABLE" + C.END
+    return C.GREY + "UNAVAILABLE" + C.END  # TAKEN or UNKNOWN
 
 # ----------------------------- VALIDATION ------------------------------------
 
@@ -345,9 +357,10 @@ def main():
             checked += 1
             if state == "AVAILABLE":
                 avail_count += 1
-            print(f"[{i + 1:>6}/{len(todo)}] {h:<30} {color_state(state)}"
+            print(f"[{i + 1:>6}/{len(todo)}] {h:<30} {display_state(state)}"
                   + (f"  {C.GREEN}<-- available!{C.END}" if state == "AVAILABLE" else "")
-                  + (f"  {C.DIM}{reason}{C.END}" if state == "UNKNOWN" else ""))
+                  + (f"  {C.DIM}({state.lower()}){C.END}" if BINARY_VIEW and state == "UNKNOWN" else "")
+                  + (f"  {C.DIM}{reason}{C.END}" if not BINARY_VIEW and state == "UNKNOWN" else ""))
             i += 1
             if i < len(todo):
                 time.sleep(delay())

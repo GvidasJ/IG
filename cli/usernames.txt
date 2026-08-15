@@ -1,0 +1,6 @@
+# One username per line. Lines starting with # are ignored.
+# Put the candidates you actually like here — you do NOT need thousands.
+# Most 3-word / longer combos are AVAILABLE, so a few dozen is plenty.
+zevanarv
+kitodrift
+emberwolf

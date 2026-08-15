@@ -3,3 +3,7 @@ cli/cookies.txt
 # Generated results (can be large).
 cli/results.csv
 results.csv
+
+# Python bytecode cache
+__pycache__/
+*.pyc

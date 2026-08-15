@@ -1,0 +1,5 @@
+# Never commit login session cookies — they grant access to the account.
+cli/cookies.txt
+# Generated results (can be large).
+cli/results.csv
+results.csv

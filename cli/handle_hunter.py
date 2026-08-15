@@ -62,9 +62,35 @@ import urllib.parse
 
 # ------------------------------- CONFIG --------------------------------------
 
-# Paste cookies here OR (better) set env vars IG_SESSIONID / IG_CSRFTOKEN.
-SESSIONID = os.environ.get("IG_SESSIONID", "")
-CSRFTOKEN = os.environ.get("IG_CSRFTOKEN", "")
+def _load_cookies():
+    """
+    Cookies come from (in order): environment variables, then a local
+    cli/cookies.txt file so you set them ONCE and never re-type them.
+    cookies.txt format (two lines):
+        sessionid=YOUR_SESSIONID
+        csrftoken=YOUR_CSRFTOKEN
+    That file is git-ignored — it holds your login session, keep it private.
+    """
+    sid = os.environ.get("IG_SESSIONID", "")
+    csrf = os.environ.get("IG_CSRFTOKEN", "")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    if (not sid or not csrf) and os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or ("=" not in line and ":" not in line):
+                    continue
+                sep = "=" if "=" in line else ":"
+                key, _, val = line.partition(sep)
+                key, val = key.strip().lower(), val.strip().strip("'\"")
+                if key in ("sessionid", "ig_sessionid") and not sid:
+                    sid = val
+                elif key in ("csrftoken", "ig_csrftoken") and not csrf:
+                    csrf = val
+    return sid, csrf
+
+
+SESSIONID, CSRFTOKEN = _load_cookies()
 
 RATE_SECONDS = 4.0        # seconds between requests (>= 1). Slower = safer.
 JITTER_FRAC = 0.5         # extra random delay, as a fraction of RATE_SECONDS.
@@ -287,8 +313,12 @@ def wait_backoff(backoff, why):
 
 def main():
     if not SESSIONID or not CSRFTOKEN:
-        print(f"{C.RED}Missing cookies.{C.END} Set IG_SESSIONID and IG_CSRFTOKEN "
-              f"(see the instructions at the top of this file).")
+        print(f"{C.RED}Missing cookies.{C.END} Two ways to provide them:\n"
+              f"  1. Make a file  cli/cookies.txt  with two lines:\n"
+              f"       sessionid=YOUR_SESSIONID\n"
+              f"       csrftoken=YOUR_CSRFTOKEN\n"
+              f"     (set once, works every time — the file is git-ignored)\n"
+              f"  2. Or set env vars IG_SESSIONID / IG_CSRFTOKEN in your terminal.")
         sys.exit(1)
 
     valid, rejected = load_candidates(resolve_input())

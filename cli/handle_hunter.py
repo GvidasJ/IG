@@ -68,7 +68,10 @@ CSRFTOKEN = os.environ.get("IG_CSRFTOKEN", "")
 
 RATE_SECONDS = 4.0        # seconds between requests (>= 1). Slower = safer.
 JITTER_FRAC = 0.5         # extra random delay, as a fraction of RATE_SECONDS.
-INPUT_FILE = "usernames.txt"
+# Input file: pass a path as the first argument, else it looks for
+# usernames.txt in the current folder AND next to this script (cli/).
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+INPUT_FILE = (sys.argv[1] if len(sys.argv) > 1 else None)
 OUTPUT_CSV = "results.csv"
 
 # Instagram's own web app id, sent with this public web API call. Not spoofing:
@@ -211,6 +214,21 @@ def run_canary():
 def delay():
     return max(1.0, RATE_SECONDS) * (1 + random.random() * max(0.0, JITTER_FRAC))
 
+def resolve_input():
+    """Find usernames.txt: explicit arg, then cwd, then next to the script."""
+    candidates = []
+    if INPUT_FILE:
+        candidates.append(INPUT_FILE)
+    else:
+        candidates += ["usernames.txt", os.path.join(_SCRIPT_DIR, "usernames.txt")]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    print(f"{C.RED}No usernames.txt found.{C.END} Looked in: {', '.join(candidates)}\n"
+          f"Create it (one username per line), or pass a path: "
+          f"python3 cli/handle_hunter.py path/to/list.txt")
+    sys.exit(1)
+
 def load_candidates(path):
     if not os.path.exists(path):
         print(f"{C.RED}No {path} found.{C.END} Create it with one username per line.")
@@ -234,7 +252,7 @@ def main():
               f"(see the instructions at the top of this file).")
         sys.exit(1)
 
-    valid, rejected = load_candidates(INPUT_FILE)
+    valid, rejected = load_candidates(resolve_input())
     if rejected:
         print(f"{C.DIM}Skipped {len(rejected)} invalid handle(s) (bad format).{C.END}")
     if not valid:
